@@ -1,0 +1,7 @@
+/statics
+/env
+./statics
+./env
+.env
+/core/.env
+./core/.env
