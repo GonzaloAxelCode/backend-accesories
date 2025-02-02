@@ -33,12 +33,17 @@ class UserAccount(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_superuser = models.BooleanField(default=False)
+    es_empleado = models.BooleanField(default=False)
     desactivate_account = models.BooleanField(default=False)
 
     objects = UserManager()
 
-    USERNAME_FIELD = 'username'  # Definir username como identificador principal
-    REQUIRED_FIELDS = []  # Campos requeridos además de username
+    USERNAME_FIELD = 'username'  
+    REQUIRED_FIELDS = [] 
 
     def __str__(self):
         return self.username
+
+
+
+

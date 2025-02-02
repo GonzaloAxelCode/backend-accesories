@@ -1,6 +1,6 @@
 from datetime import timedelta
 from pathlib import Path
-import environ
+import environ # type: ignore
 
 import os
 
@@ -37,16 +37,24 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
-    'django.contrib.staticfiles',"apps.user","corsheaders",
-                    "rest_framework",
-                    "djoser",
-                    
-                    "ckeditor",
-                    "ckeditor_uploader",
-                    'django.contrib.sites',
-                    'allauth',
-                    'allauth.account',
-                    "rest_framework.authtoken",
+    'django.contrib.staticfiles',
+    "corsheaders",
+    "rest_framework",
+    "djoser",
+                    "apps.user",
+                    "apps.categoria",
+                    "apps.inventario",
+                    "apps.cliente",
+                    "apps.producto",
+                    "apps.proveedor",
+                    "apps.tienda",
+                    "apps.venta",
+    "ckeditor",
+    "ckeditor_uploader",
+    'django.contrib.sites',
+    'allauth',
+    'allauth.account',
+    "rest_framework.authtoken",
      
 ]
 
@@ -89,7 +97,7 @@ WSGI_APPLICATION = 'core.wsgi.application'
 
 # Databases
 DATABASES = {
-    "default": env.db("DATABASE_URL", default="postgres:///ninerogues"),
+    "default": env.db("DATABASE_URL", default="postgres:///ninerogues"), # type: ignore
 }
 DATABASES["default"]["ATOMIC_REQUESTS"] = True
 
