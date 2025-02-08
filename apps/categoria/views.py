@@ -50,3 +50,8 @@ class DeactivateCategoria(APIView):
         categoria.activo = False
         categoria.save()
         return Response({"message": "Categoria desactivada exitosamente"}, status=status.HTTP_200_OK)
+class DeleteCategoria(APIView):
+    def delete(self, request, id):
+        categoria = get_object_or_404(Categoria, id=id)
+        categoria.delete()
+        return Response({"message": "Categoria eliminada exitosamente"}, status=status.HTTP_204_NO_CONTENT)

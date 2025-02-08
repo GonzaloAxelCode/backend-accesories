@@ -37,9 +37,9 @@ class UpdateProveedor(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class DeactivateProveedor(APIView):
-    def patch(self, request, id):
+class DeleteProveedor(APIView):
+    def delete(self, request, id):
         proveedor = get_object_or_404(Proveedor, id=id)
-        proveedor.activo = False
-        proveedor.save()
-        return Response({"message": "Proveedor desactivado exitosamente"}, status=status.HTTP_200_OK)
+        proveedor.delete()
+
+        return Response({"message": "Proveedor eliminado exitosamente"}, status=status.HTTP_204_NO_CONTENT)

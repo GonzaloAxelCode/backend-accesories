@@ -9,19 +9,4 @@ class InventarioSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Inventario
-        fields = [
-            'id',
-            'producto',
-            'producto_nombre',
-            'tienda',
-            'tienda_nombre',
-            'cantidad',
-            'stock_minimo',
-            'stock_maximo',
-            'fecha_actualizacion',
-            'activo',
-            'lote',
-            'fecha_vencimiento',
-            'costo',
-            'estado'
-        ]
+        fields = '__all__'  # Incluir todos los campos

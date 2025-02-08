@@ -12,15 +12,22 @@ from apps.producto.models import Producto
 from apps.proveedor.models import Proveedor
 from apps.tienda.models import Tienda
 
+from django.contrib.auth import get_user_model
+User = get_user_model()
 class CrearInventario(APIView):
     def post(self, request):
         try:
             data = request.data
-            producto = get_object_or_404(Producto, id=data.get("producto_id"))
-            tienda = get_object_or_404(Tienda, id=data.get("tienda_id"))
+            producto = get_object_or_404(Producto, id=data.get("producto"))
+            tienda = get_object_or_404(Tienda, id=data.get("tienda"))
+            proveedor = get_object_or_404(Proveedor, id=data.get("proveedor"))
+            user = get_object_or_404(User, id=data.get("responsable"))
             
 
             nuevo_inventario = Inventario.objects.create(
+                responsable=user,
+                proveedor=proveedor,
+                descripcion=data.get("descripcion",""),
                 producto=producto,
                 tienda=tienda,
                 cantidad=data.get("cantidad", 0),
