@@ -1,21 +1,17 @@
 from django.db import models
 
-# Create your models here.
-#
 class Cliente(models.Model):
-    nombre = models.CharField(max_length=100)
-    apellido = models.CharField(max_length=100)
-    dni = models.CharField(max_length=100,unique=True,blank=True,null=True)
-    email = models.EmailField(unique=True)
-    telefono = models.CharField(max_length=15)
-    direccion = models.TextField()
-    pais = models.CharField(max_length=100)
-    codigo_postal = models.CharField(max_length=10)
-    fecha_registro = models.DateTimeField(auto_now_add=True)
-    fecha_nacimiento = models.DateField(null=True, blank=True)
-    genero = models.CharField(max_length=1, choices=[('M', 'Masculino'), ('F', 'Femenino')])
-    activo = models.BooleanField(default=True)
-
+    number = models.CharField(max_length=8, unique=True,null=True, blank=True)  # Número de DNI
+    full_name = models.CharField(max_length=255,null=True, blank=True)  # Nombre completo
+    name = models.CharField(max_length=100,null=True, blank=True)  # Nombre(s)
+    surname = models.CharField(max_length=100,null=True, blank=True)  # Apellido(s)
+    verification_code = models.CharField(max_length=10, null=True, blank=True)  # Código de verificación (puede ser nulo)
+    date_of_birth = models.DateField(null=True, blank=True)  # Fecha de nacimiento
+    department = models.CharField(max_length=100,null=True, blank=True)  # Departamento
+    province = models.CharField(max_length=100,null=True, blank=True)  # Provincia
+    district = models.CharField(max_length=100,null=True, blank=True)  # Distrito
+    address = models.TextField(null=True, blank=True)  # Dirección completa
+    ubigeo = models.CharField(max_length=6,null=True, blank=True)  # Cóhigo de Ubigeo
 
     def __str__(self):
-        return f"{self.nombre} {self.apellido}"
+        return f"{self.full_name}"

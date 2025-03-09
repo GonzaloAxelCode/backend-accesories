@@ -49,6 +49,8 @@ INSTALLED_APPS = [
                     "apps.proveedor",
                     "apps.tienda",
                     "apps.venta",
+                    "apps.external",
+                    "apps.comprobante",
     "ckeditor",
     "ckeditor_uploader",
     'django.contrib.sites',

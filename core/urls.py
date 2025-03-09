@@ -18,6 +18,8 @@ urlpatterns = [
     path("api/",include("apps.producto.urls")),
     path("api/",include("apps.inventario.urls")),
     path("api/",include("apps.venta.urls")),
+    path("api/",include("apps.external.urls")),
+    path("api/",include("apps.comprobante.urls")),
 ]
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

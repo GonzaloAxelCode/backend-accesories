@@ -18,6 +18,9 @@ class Inventario(models.Model):
     activo = models.BooleanField(default=True)
     lote = models.CharField(max_length=100, blank=True, null=True)
     fecha_vencimiento = models.DateField(null=True, blank=True)
+    costo_compra = models.DecimalField(max_digits=10, decimal_places=2,null=True)
+    costo_venta = models.DecimalField(max_digits=10, decimal_places=2,null=True)
+    costo_docena = models.DecimalField(max_digits=10, decimal_places=2,null=True)
     costo = models.DecimalField(max_digits=10, decimal_places=2)
     estado = models.CharField(max_length=100)
     # Nuevos campo

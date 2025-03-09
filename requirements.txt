@@ -26,4 +26,9 @@ Pillow
 python-decouple==3.8
 decouple
 environ
+#Facturacion electronica
+ lxml 
+ pyOpenSSL 
+ signxml
 
+beautifulsoup4

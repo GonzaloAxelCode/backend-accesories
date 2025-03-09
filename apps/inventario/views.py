@@ -33,10 +33,9 @@ class CrearInventario(APIView):
                 cantidad=data.get("cantidad", 0),
                 stock_minimo=data.get("stock_minimo", 0),
                 stock_maximo=data.get("stock_maximo", 100),
-                lote=data.get("lote", ""),
-                fecha_vencimiento=data.get("fecha_vencimiento"),
-                costo=data.get("costo", 0.00),
-                
+                costo_compra=data.get("costo_compra", 0.00),
+                costo_venta=data.get("costo_venta", 0.00),
+                costo=data.get("costo_compra", 0.00),
                 estado=data.get("estado", "Disponible"),
             )
 
