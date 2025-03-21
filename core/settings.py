@@ -38,6 +38,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+        "rest_framework_simplejwt.token_blacklist",
+
     "corsheaders",
     "rest_framework",
     "djoser",
@@ -165,12 +167,15 @@ DJOSER = {
         'user': 'apps.user.serializers.UserAcountCreateSerializer',
         'current_user': 'apps.user.serializers.UserAcountCreateSerializer',
         'user_delete': 'djoser.serializers.UserDeleteSerializer',
+        "token_create": "apps.user.serializers.CustomTokenObtainPairSerializer",
+
     },
 }
 
 
 SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("JWT",),
+     "BLACKLIST_AFTER_ROTATION": True,
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=10080),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=15),
     "ROTATE_REFRESH_TOKEN": True,

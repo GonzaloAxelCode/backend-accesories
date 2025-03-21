@@ -3,10 +3,33 @@ from apps.inventario.models import Inventario
 
 
 class InventarioSerializer(serializers.ModelSerializer):
-    producto_nombre = serializers.ReadOnlyField(source='producto.nombre')
-    tienda_nombre = serializers.ReadOnlyField(source='tienda.nombre')
-    
+    producto_nombre = serializers.SerializerMethodField()
+    tienda_nombre = serializers.SerializerMethodField()
+    proveedor_nombre = serializers.SerializerMethodField()
+    categoria_nombre = serializers.SerializerMethodField()  # Nuevo campo
+ 
 
     class Meta:
         model = Inventario
-        fields = '__all__'  # Incluir todos los campos
+        fields = [
+            'id', 'producto', 'producto_nombre','categoria_nombre',
+            'tienda', 'tienda_nombre',
+            'cantidad', 'stock_minimo', 'stock_maximo',
+            'costo_compra', 'costo_venta', 'fecha_actualizacion',
+            'activo', 'lote', 'fecha_vencimiento', 'estado',
+            'proveedor', 'proveedor_nombre',
+            'responsable', 
+            'descripcion'
+        ]
+
+    def get_producto_nombre(self, obj):
+        return obj.producto.nombre if obj.producto else "Desconocido"
+
+    def get_tienda_nombre(self, obj):
+        return obj.tienda.nombre if obj.tienda else "Desconocido"
+
+    def get_proveedor_nombre(self, obj):
+        return obj.proveedor.nombre if obj.proveedor else "Desconocido"
+
+    def get_categoria_nombre(self, obj):
+        return obj.producto.categoria.nombre if obj.producto and obj.producto.categoria else "Desconocido"

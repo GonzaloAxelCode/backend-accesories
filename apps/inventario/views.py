@@ -22,7 +22,12 @@ class CrearInventario(APIView):
             tienda = get_object_or_404(Tienda, id=data.get("tienda"))
             proveedor = get_object_or_404(Proveedor, id=data.get("proveedor"))
             user = get_object_or_404(User, id=data.get("responsable"))
-            
+            # Verificar si ya existe un inventario con el mismo producto y tienda
+            if Inventario.objects.filter(producto=producto, tienda=tienda).exists():
+                return Response(
+                    {"message": "Ya existe un inventario con este producto en esta tienda.","string_err": "inventario_existente"},
+                    status=status.HTTP_400_BAD_REQUEST
+                ) 
 
             nuevo_inventario = Inventario.objects.create(
                 responsable=user,
@@ -98,31 +103,50 @@ class ActualizarStock(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class AjustarStock(APIView):
-    def patch(self, request, inventario_id):
+class ActualizarInventarioView(APIView):
+    def patch(self, request, *args, **kwargs):
         try:
+            inventario_id = request.data.get("id")
+            nuevo_stock = request.data.get("cantidad")
+            nuevo_costo_compra = request.data.get("costo_compra")
+            nuevo_costo_venta = request.data.get("costo_venta")
+
+            if not inventario_id:
+                return Response({"error": "inventario_id es requerido"}, status=status.HTTP_400_BAD_REQUEST)
+
             inventario = get_object_or_404(Inventario, id=inventario_id)
-            cantidad_ajuste = request.data.get("cantidad", 0)
 
-            if not isinstance(cantidad_ajuste, int):
-                return Response({"error": "La cantidad debe ser un número entero."}, status=status.HTTP_400_BAD_REQUEST)
+            # Validar stock mínimo y máximo
+            if nuevo_stock is not None:
+                if nuevo_stock < inventario.stock_minimo:
+                    return Response({"error": f"El stock no puede ser menor a {inventario.stock_minimo}"}, status=status.HTTP_400_BAD_REQUEST)
+                if nuevo_stock > inventario.stock_maximo:
+                    return Response({"error": f"El stock no puede ser mayor a {inventario.stock_maximo}"}, status=status.HTTP_400_BAD_REQUEST)
+                inventario.cantidad = nuevo_stock  # Actualizar stock solo si está dentro del rango
 
-            nuevo_stock = inventario.cantidad + cantidad_ajuste
+            # Actualizar costos si fueron proporcionados
+            if nuevo_costo_compra is not None:
+                inventario.costo_compra = nuevo_costo_compra
+            if nuevo_costo_venta is not None:
+                inventario.costo_venta = nuevo_costo_venta
 
-            if nuevo_stock < 0:
-                return Response({"error": "No se puede tener stock negativo."}, status=status.HTTP_400_BAD_REQUEST)
-
-            if nuevo_stock > inventario.stock_maximo:
-                return Response({"error": "El stock no puede superar el máximo permitido."}, status=status.HTTP_400_BAD_REQUEST)
-
-            inventario.cantidad = nuevo_stock
+            # Guardar cambios en la base de datos
             inventario.save()
 
-            return Response({"message": "Stock ajustado correctamente.", "nuevo_stock": inventario.cantidad}, status=status.HTTP_200_OK)
-
+            return Response(InventarioSerializer(inventario).data, status=status.HTTP_200_OK)
+        
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": f"Error al actualizar inventario: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+class EliminarInventario(APIView):
+   def delete(self, request, inventario_id):
+        inventario = get_object_or_404(Inventario, id=inventario_id) 
+        inventario.delete()
+        return Response({"message": "Inventario eliminado exitosamente"}, status=status.HTTP_200_OK)
 
+        
+ 
+    
 class VerificarStock(APIView):
     def get(self, request, inventario_id):
         try:

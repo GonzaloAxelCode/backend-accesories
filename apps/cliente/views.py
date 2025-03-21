@@ -42,6 +42,6 @@ class UpdateCliente(APIView):
 class DeactivateCliente(APIView):
     def patch(self, request, dni):
         cliente = get_object_or_404(Cliente, dni=dni)
-        cliente.activo = False
+        cliente.activo = False # type: ignore
         cliente.save()
         return Response({"message": "Cliente desactivado exitosamente"}, status=status.HTTP_200_OK)

@@ -14,6 +14,6 @@ class Categoria(models.Model):
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True)
     destacado = models.BooleanField(default=False)
     color = models.CharField(max_length=50, blank=True)
-
+    siglas_nombre_categoria = models.CharField(max_length=10, blank=True,null=True)
     def __str__(self):
         return self.nombre
