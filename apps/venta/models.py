@@ -11,7 +11,7 @@ from django.utils.timezone import now
 class Venta(models.Model):
     usuario = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     tienda = models.ForeignKey(Tienda, on_delete=models.SET_NULL, null=True)
-    fecha_hora = models.DateTimeField(auto_now_add=True)
+    fecha_hora = models.DateTimeField()
     fecha_realizacion = models.DateTimeField(auto_now_add=True,null=True, blank=True)
     fecha_cancelacion = models.DateTimeField(null=True, blank=True)
     metodo_pago = models.CharField(max_length=100,null=True)
@@ -27,7 +27,6 @@ class Venta(models.Model):
 class VentaProducto(models.Model):
     venta = models.ForeignKey(Venta, on_delete=models.CASCADE)  # Relación con la venta
     producto = models.ForeignKey(Producto, on_delete=models.SET_NULL, null=True, blank=True)  # Si el producto se elimina, queda nulo
-    
     cantidad = models.IntegerField()
     valor_unitario = models.DecimalField(max_digits=10, decimal_places=2)  # Precio sin IGV
     valor_venta = models.DecimalField(max_digits=10, decimal_places=2)  # Total sin IGV

@@ -14,6 +14,7 @@ from rest_framework import status
 
 from apps.user.models import UserAccount
 User = get_user_model()
+from django.contrib.auth.models import Permission
 
 
 class UserAcountCreateSerializer(UserCreateSerializer):
@@ -31,10 +32,27 @@ class UserAuthSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAccount
-        
         fields = '__all__'
         extra_kwargs = {'password': {'write_only': True}}
 
+    def to_representation(self, instance):
+        # Serializar los datos normales del usuario
+        data = super().to_representation(instance)
+
+        # Obtener el app_label del modelo
+        app_label = 'apps.user'
+        
+        # Filtrar permisos relevantes del modelo UserAccount
+        relevant_permissions = Permission.objects.filter(content_type__app_label=app_label)
+        
+        # Construir un diccionario con los permisos y si el usuario los tiene
+        permissions = {
+            perm.codename: instance.has_perm(f"{app_label}.{perm.codename}") for perm in relevant_permissions
+        }
+        
+        # Agregar los permisos al resultado serializado
+        data['permissions'] = permissions
+        return data
 
 class UserAccountSerializer(serializers.ModelSerializer):
     class Meta:

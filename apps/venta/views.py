@@ -1,4 +1,10 @@
+from datetime import timedelta
+
 from decimal import Decimal
+from datetime import datetime, timedelta
+from rest_framework.pagination import PageNumberPagination
+from math import ceil
+from time import localtime
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 import requests
@@ -9,21 +15,33 @@ from django.conf import settings
 from django.utils import timezone
 import json
 from num2words import num2words  
-
+from rest_framework.permissions import IsAuthenticated
+from django.utils.timezone import now
+from django.db.models import Sum
 from apps.comprobante.models import ComprobanteElectronico
 from apps.inventario.models import Inventario
+from apps.venta.serialzers import VentaSerializer
 from .models import Venta, VentaProducto, Tienda, Producto
 SUNAT_PHP = "http://localhost:8080"
 from django.contrib.auth import get_user_model
 User = get_user_model()
 from django.db.models import Max
 
+from django.utils import timezone
+from django.utils.timezone import localtime, make_aware
 
+class VentaPagination(PageNumberPagination):
+    page_size = 5  # Número predeterminado de ventas por página
+    page_size_query_param = 'page_size'  # El cliente puede cambiar el tamaño con ?page_size=
+    max_page_size = 100  # Tamaño máximo permitido por página
+    
+    
 class RegistrarVentaView(APIView):
     def post(self, request):
+       
         try:
             data = request.data
-
+           
             # Validar que los datos obligatorios existan
             if not all(k in data for k in ["tiendaId", "usuarioId", "metodoPago", "tipoComprobante", "productos"]):
                 return Response({"error": "Faltan datos obligatorios"}, status=status.HTTP_400_BAD_REQUEST)
@@ -63,6 +81,13 @@ class RegistrarVentaView(APIView):
             tienda = get_object_or_404(Tienda, id=data["tiendaId"])
             usuario = get_object_or_404(User, id=data["usuarioId"])
             cliente_data = data["cliente"]
+            
+            fecha_hora_naive = datetime.now()  # Esto es naive
+
+# Convertir a datetime aware
+            fecha_hora_aware = timezone.make_aware(fecha_hora_naive)
+            print(fecha_hora_aware) 
+
 
             with transaction.atomic():
                 # Crear la venta
@@ -70,7 +95,8 @@ class RegistrarVentaView(APIView):
                     usuario=usuario,
                     tienda=tienda,
                     metodo_pago=data["metodoPago"],
-                    tipo_comprobante=data["tipoComprobante"]
+                    tipo_comprobante=data["tipoComprobante"],
+                    fecha_hora=fecha_hora_aware
                 )
                 subtotal = Decimal(0)
                 gravado_total = Decimal(0)
@@ -254,9 +280,10 @@ class RegistrarVentaView(APIView):
                         "gravado_total": float(gravado_total),
                         "igv_total": float(igv_total),
                         "total": float(total),
+                        "productos_json": json.dumps(productos_registrados),
                         "productos": productos_registrados,
                         "comprobante_data":comprobante_data ,                
-                        "comprobante_result": comprobante_json                 
+                        "comprobante": comprobante_json                 
                     }
                     
                     
@@ -269,8 +296,9 @@ class RegistrarVentaView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-class VentasPorTiendaView(APIView):
+class VentasPorTiendaView__(APIView):
     def get(self, request, tienda_id):
+        
         # Obtener la tienda o devolver 404 si no existe
         tienda = get_object_or_404(Tienda, id=tienda_id)
 
@@ -383,3 +411,496 @@ class EliminarVentaView(APIView):
             {"message": "Venta eliminada (esto deberia ser en desarollo si esta en produccion puede generar errores)."}, 
             status=status.HTTP_200_OK
         )
+        
+    
+class VentasResumenView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, *args, **kwargs):
+        tienda_id = request.data.get("tienda_id")
+        if not tienda_id:
+            return Response({"error": "Se requiere el ID de la tienda."}, status=400)
+        
+        # Obtener la fecha y hora actual en la zona horaria de Lima, Perú
+        today = localtime(now()).date()
+        start_of_week = today - timedelta(days=today.weekday())
+        start_of_month = today.replace(day=1)
+        current_year = today.year
+        
+        # Filtrar ventas activas de la tienda
+        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True)
+        
+        # Ventas del día
+        today_sales = ventas_activas.filter(fecha_hora__date=today).aggregate(total=Sum("total"))['total'] or 0
+        
+        # Ventas de la semana (considerando el año)
+        this_week_sales = ventas_activas.filter(
+            fecha_hora__date__gte=start_of_week,
+            fecha_hora__year=current_year
+        ).aggregate(total=Sum("total"))['total'] or 0
+        
+        # Ventas del mes (considerando el año)
+        this_month_sales = ventas_activas.filter(
+            fecha_hora__date__gte=start_of_month,
+            fecha_hora__year=current_year
+        ).aggregate(total=Sum("total"))['total'] or 0
+        
+        return Response({
+            "todaySales": today_sales,
+            "thisWeekSales": this_week_sales,
+            "thisMonthSales": this_month_sales
+        })
+        
+
+
+
+
+class VentaSalesByDateView(APIView):
+    def post(self, request, *args, **kwargs):
+        # Obtener los rangos de fechas desde el cuerpo de la solicitud
+        from_date = request.data.get('from_date')  # Expected format: [2025, 0, 1] para enero
+        to_date = request.data.get('to_date')  # Expected format: [2025, 3, 1] para abril
+        tienda_id = request.data.get('tienda_id')  # tienda_id
+
+        if not from_date or not to_date:
+            return Response({"error": "Se debe proporcionar un rango de fechas válido"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Convertir de [year, month, day] a objetos datetime (sin horas, minutos ni segundos)
+        # Ajustar el mes, ya que el mes está en formato 0-11
+        from_date_obj = make_aware(datetime(from_date[0], from_date[1] + 1, from_date[2]))  # Ajuste mes
+        to_date_obj = make_aware(datetime(to_date[0], to_date[1] + 1, to_date[2]))  # Ajuste mes
+
+        # Convertir las fechas a solo la parte de la fecha (sin horas)
+        from_date_obj = from_date_obj.date()
+        to_date_obj = to_date_obj.date()
+
+        # Generar todos los días en el rango especificado usando timedelta
+        date_range = []
+        current_date = from_date_obj
+        while current_date <= to_date_obj:
+            date_range.append(current_date)  # Añadir solo la parte de la fecha (sin hora)
+            current_date += timedelta(days=1)  # Avanzar al siguiente día
+
+        # Filtrar las ventas en el rango de fechas
+        ventas = Venta.objects.filter(tienda=tienda_id, fecha_hora__gte=from_date_obj, fecha_hora__lte=to_date_obj)
+
+        # Agrupar las ventas por fecha y calcular el total de ventas por fecha
+        daily_sales = (
+            ventas
+            .values('fecha_hora__date')  # Agrupar solo por fecha (sin horas, minutos ni segundos)
+            .annotate(total_sales=Sum('total'))  # Sumar las ventas totales por cada fecha
+            .order_by('fecha_hora__date')  # Ordenar por fecha
+        )
+
+        # Crear un diccionario de ventas por fecha
+        sales_by_date = {sale['fecha_hora__date']: sale['total_sales'] or 0 for sale in daily_sales}
+
+        # Preparar los datos para la respuesta, asegurándonos de que todos los días en el rango estén presentes
+        sales_date_range = [
+            # Asegurarse de que el mes esté en formato 0-11 (como en Python)
+            [f"{date.year}, {date.month - 1}, {date.day}", float(sales_by_date.get(date, 0))]  # Si no hay ventas, asignamos 0
+            for date in date_range
+        ]
+
+        # Devolver los resultados
+        return Response({"salesDateRangePerDay": sales_date_range}, status=status.HTTP_200_OK)
+
+
+
+class ProductosMasVendidosView(APIView):
+    def post(self, request):
+        from_date = request.data.get('from_date')  # [2025, 0, 1]
+        to_date = request.data.get('to_date')      # [2025, 3, 1]
+        tienda_id = request.data.get('tienda_id')
+
+        if not from_date or not to_date or not tienda_id:
+            return Response({"error": "Se requieren 'from_date', 'to_date' y 'tienda_id'"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from_date_obj = datetime(from_date[0], from_date[1] + 1, from_date[2])
+            to_date_obj = datetime(to_date[0], to_date[1] + 1, to_date[2], 23, 59, 59)
+        except Exception as e:
+            return Response({"error": "Formato de fecha inválido"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Filtramos las ventas por tienda y fecha
+        ventas_filtradas = Venta.objects.filter(
+            tienda_id=tienda_id,
+            fecha_hora__range=(from_date_obj, to_date_obj)
+        ).values_list('id', flat=True)
+
+        # Buscamos los productos vendidos en esas ventas
+        productos_mas_vendidos = (
+            VentaProducto.objects
+            .filter(venta_id__in=ventas_filtradas)
+            .values('producto', 'producto__nombre')
+            .annotate(total_vendido=Sum('cantidad'))
+            .order_by('-total_vendido')[:5]
+        )
+
+        data = [
+            {
+                'producto_id': item['producto'],
+                'nombre': item['producto__nombre'],
+                'cantidad_total_vendida': item['total_vendido']
+            }
+            for item in productos_mas_vendidos
+        ]
+
+        return Response({"topProductoMostSales":data}, status=status.HTTP_200_OK)
+from datetime import date, timedelta
+ 
+
+class VentasPerDayOrMonth(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, *args, **kwargs):
+        tienda_id = request.data.get("tienda_id")
+        year = int(request.data.get("year", 0))
+        month = int(request.data.get("month", 0))
+        day = int(request.data.get("day", 0))
+        tipo = request.data.get("tipo", "default")  # El tipo será pasado en el body del request
+
+        if not tienda_id:
+            return Response({"error": "Se requiere el ID de la tienda."}, status=400)
+
+
+
+        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True)
+
+        today_sales = None
+        this_month_sales = None
+
+        try:
+            # Si el tipo es 'day_month_year' se calcula las ventas de un día específico
+            if tipo == "day_month_year" :
+                selected_date = date(year, month, day)
+                today_sales = ventas_activas.filter(
+                    fecha_hora__date=selected_date
+                ).aggregate(total=Sum("total"))['total'] or 0
+                
+
+            # Si el tipo es 'month_year' se calcula las ventas del mes
+            elif tipo == "month_year" and year and month:
+                start_of_month = date(year, month, 1)
+                if month == 12:
+                    end_of_month = date(year + 1, 1, 1)
+                else:
+                    end_of_month = date(year, month + 1, 1)
+
+                this_month_sales = ventas_activas.filter(
+                    fecha_hora__date__gte=start_of_month,
+                    fecha_hora__date__lt=end_of_month
+                ).aggregate(total=Sum("total"))['total'] or 0
+                
+
+            # Si no se pasó el tipo o año, se responde por defecto
+            else:
+                return Response({
+                    "todaySales": None,
+                    "thisMonthSales": None,
+                    "tipo": "default"
+                })
+
+        except ValueError:
+            return Response({"error": "Fecha inválida."}, status=400)
+
+        return Response({
+            "todaySales": today_sales,
+            "thisMonthSales": this_month_sales,
+            "tipo": tipo
+        })
+        
+
+        
+class VentaBusquedaView(APIView):
+    def post(self, request):
+        
+            page_number = int(request.data.get('page', 1))
+            page_size = int(request.data.get('page_size', 5))
+            tienda_id = request.data.get('tienda_id')
+            query = request.data.get('query', {})
+            ventas = Venta.objects.all()
+            ventas = ventas.filter(tienda_id=tienda_id)
+
+            # Filtro por fechas
+            from_date = query.get('from_date')
+            to_date = query.get('to_date')
+            
+               
+            from_date_obj = datetime(
+                        year=from_date[0],
+                        month=from_date[1] + 1,  # Convertir a 1-based
+                        day=from_date[2]
+            )
+            to_date_obj = datetime(
+                        year=to_date[0],
+                        month=to_date[1] + 1,    # Convertir a 1-based
+                        day=to_date[2],
+                        hour=23,
+                        minute=59,
+                        second=59
+            )
+            
+            
+            ventas = ventas.filter(fecha_hora__range=(from_date_obj, to_date_obj))
+             
+             
+            
+    
+            metodo_pago = query.get('metodo_pago')
+            tipo_comprobante = query.get('tipo_comprobante')
+            
+            
+            nombre_cliente = query.get('nombre_cliente')
+            numero_documento_cliente = query.get('numero_documento_cliente')
+            numero_comprobante = query.get('numero_comprobante')
+            estado_sunat = query.get('estado_sunat')
+            
+            
+            if metodo_pago  is not "":
+                print(metodo_pago)
+                ventas = ventas.filter(metodo_pago__icontains=metodo_pago)
+            if estado_sunat  is not "":
+                ventas = ventas.filter(comprobante__estado_sunat__icontains=estado_sunat)
+            if tipo_comprobante  is not "":
+                ventas = ventas.filter(tipo_comprobante__icontains=tipo_comprobante) 
+            if numero_documento_cliente  is not "":
+                ventas = ventas.filter(comprobante__numero_documento_cliente__icontains=numero_documento_cliente)
+            if numero_comprobante  is not "":
+                ventas = ventas.filter(comprobante__correlativo=numero_comprobante)
+            
+            if nombre_cliente  is not "":
+                ventas = ventas.filter(comprobante__nombre_cliente__icontains=nombre_cliente)
+                
+                
+            total_ventas = ventas.count()
+            paginator = VentaPagination()
+            result_page = paginator.paginate_queryset(ventas, request)
+            total_pages = ceil(total_ventas / page_size)           
+            
+            next_page = page_number + 1 if page_number < total_pages else None
+            previous_page = page_number - 1 if page_number > 1 else None
+            
+            
+            ventas_json = []
+            for venta in result_page: # type: ignore
+                comprobante_venta = ComprobanteElectronico.objects.filter(venta=venta).first()
+                comprobante_json = None
+                productos = VentaProducto.objects.filter(venta=venta)
+
+                if comprobante_venta:
+                    comprobante_json = {
+                        "tipo_comprobante": comprobante_venta.tipo_comprobante,
+                        "serie": comprobante_venta.serie,
+                        "correlativo": comprobante_venta.correlativo,
+                        "moneda": comprobante_venta.moneda,
+                        "gravadas": float(comprobante_venta.gravadas) if comprobante_venta.gravadas else None,
+                        "igv": float(comprobante_venta.igv) if comprobante_venta.igv else None,
+                        "valorVenta": float(comprobante_venta.valorVenta) if comprobante_venta.valorVenta else None,
+                        "sub_total": float(comprobante_venta.sub_total) if comprobante_venta.sub_total else None,
+                        "total": float(comprobante_venta.total) if comprobante_venta.total else None,
+                        "leyenda": comprobante_venta.leyenda,
+                        "tipo_documento_cliente": comprobante_venta.tipo_documento_cliente,
+                        "numero_documento_cliente": comprobante_venta.numero_documento_cliente,
+                        "nombre_cliente": comprobante_venta.nombre_cliente,
+                        "estado_sunat": comprobante_venta.estado_sunat,
+                        "xml_url": comprobante_venta.xml_url,
+                        "pdf_url": comprobante_venta.pdf_url,
+                        "cdr_url": comprobante_venta.cdr_url,
+                        "ticket_url": comprobante_venta.ticket_url,
+                        "items": comprobante_venta.items
+                    }
+
+                productos_json = [
+                    {
+                        "id": producto.id, # type: ignore
+                        "producto": producto.producto.id if producto.producto else None, # type: ignore
+                        "producto_nombre": producto.producto.nombre if producto.producto else "Producto eliminado",
+                        "cantidad": producto.cantidad,
+                        "valor_unitario": float(producto.valor_unitario),
+                        "valor_venta": float(producto.valor_venta),
+                        "base_igv": float(producto.base_igv),
+                        "porcentaje_igv": float(producto.porcentaje_igv),
+                        "igv": float(producto.igv),
+                        "tipo_afectacion_igv": producto.tipo_afectacion_igv,
+                        "total_impuestos": float(producto.total_impuestos),
+                        "precio_unitario": float(producto.precio_unitario)
+                    }
+                    for producto in productos
+                ]
+
+                ventas_json.append({
+                    "id": venta.id,
+                    "usuario": venta.usuario.id if venta.usuario else None,
+                    "tienda": venta.tienda.id,
+                    "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
+                    "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
+                    "fecha_cancelacion": venta.fecha_cancelacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_cancelacion else None,
+                    "metodo_pago": venta.metodo_pago,
+                    "estado": venta.estado,
+                    "activo": venta.activo,
+                    "tipo_comprobante": venta.tipo_comprobante,
+                    "productos": productos_json,
+                    "total": venta.total,
+                    "productos_json": json.dumps(venta.productos_json, indent=4),
+                    "comprobante": comprobante_json
+                })
+   
+            
+            
+            
+            
+            return Response({
+               "count": total_ventas,
+                "next": next_page,
+                "previous": previous_page,
+                "index_page":page_number - 1,
+                "length_pages": total_pages ,
+                "results": ventas_json,
+                "search_ventas_found": "ventas_found" if total_ventas > 0 else "ventas_not_found",
+            })
+        
+
+    
+    
+class VentasPorTiendaView(APIView):
+    def get(self, request):
+        try:
+            # Obtener parámetros de la URL
+            page_size = int(request.query_params.get('page_size', 5))
+            page_number = int(request.query_params.get('page', 1))
+            tienda_id = request.query_params.get('tienda_id')
+            
+            # Filtro por fecha (ahora espera strings en formato YYYY-MM-DD)
+            from_date_str = request.query_params.get('from_date')
+            to_date_str = request.query_params.get('to_date')
+     
+            from_date_obj = datetime.strptime(from_date_str, '%Y-%m-%d')
+            to_date_obj = datetime.strptime(to_date_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+            ventas = Venta.objects.all()
+            ventas = ventas.filter(tienda_id=tienda_id,fecha_hora__range=(from_date_obj, to_date_obj))
+            
+            
+            total_ventas = ventas.count()
+        
+            paginator = VentaPagination()
+            
+            paginated_ventas = paginator.paginate_queryset(ventas, request)
+            
+            total_pages = ceil(total_ventas / page_size)
+            
+            ventas_json = []
+            for venta in paginated_ventas: # type: ignore
+                comprobante_venta = ComprobanteElectronico.objects.filter(venta=venta).first()
+                comprobante_json = None
+                productos = VentaProducto.objects.filter(venta=venta)
+
+                if comprobante_venta:
+                    comprobante_json = {
+                        "tipo_comprobante": comprobante_venta.tipo_comprobante,
+                        "serie": comprobante_venta.serie,
+                        "correlativo": comprobante_venta.correlativo,
+                        "moneda": comprobante_venta.moneda,
+                        "gravadas": float(comprobante_venta.gravadas) if comprobante_venta.gravadas else None,
+                        "igv": float(comprobante_venta.igv) if comprobante_venta.igv else None,
+                        "valorVenta": float(comprobante_venta.valorVenta) if comprobante_venta.valorVenta else None,
+                        "sub_total": float(comprobante_venta.sub_total) if comprobante_venta.sub_total else None,
+                        "total": float(comprobante_venta.total) if comprobante_venta.total else None,
+                        "leyenda": comprobante_venta.leyenda,
+                        "tipo_documento_cliente": comprobante_venta.tipo_documento_cliente,
+                        "numero_documento_cliente": comprobante_venta.numero_documento_cliente,
+                        "nombre_cliente": comprobante_venta.nombre_cliente,
+                        "estado_sunat": comprobante_venta.estado_sunat,
+                        "xml_url": comprobante_venta.xml_url,
+                        "pdf_url": comprobante_venta.pdf_url,
+                        "cdr_url": comprobante_venta.cdr_url,
+                        "ticket_url": comprobante_venta.ticket_url,
+                        "items": comprobante_venta.items
+                    }
+
+                productos_json = [
+                    {
+                        "id": producto.id, # type: ignore
+                        "producto": producto.producto.id if producto.producto else None, # type: ignore
+                        "producto_nombre": producto.producto.nombre if producto.producto else "Producto eliminado",
+                        "cantidad": producto.cantidad,
+                        "valor_unitario": float(producto.valor_unitario),
+                        "valor_venta": float(producto.valor_venta),
+                        "base_igv": float(producto.base_igv),
+                        "porcentaje_igv": float(producto.porcentaje_igv),
+                        "igv": float(producto.igv),
+                        "tipo_afectacion_igv": producto.tipo_afectacion_igv,
+                        "total_impuestos": float(producto.total_impuestos),
+                        "precio_unitario": float(producto.precio_unitario)
+                    }
+                    for producto in productos
+                ]
+
+                ventas_json.append({
+                    "id": venta.id,
+                    "usuario": venta.usuario.id if venta.usuario else None,
+                    "tienda": venta.tienda.id,
+                    "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
+                    "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
+                    "fecha_cancelacion": venta.fecha_cancelacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_cancelacion else None,
+                    "metodo_pago": venta.metodo_pago,
+                    "estado": venta.estado,
+                    "activo": venta.activo,
+                    "tipo_comprobante": venta.tipo_comprobante,
+                    "productos": productos_json,
+                    "total": venta.total,
+                    "productos_json": json.dumps(venta.productos_json, indent=4),
+                    "comprobante": comprobante_json
+                })
+
+
+
+
+            next_page = page_number + 1 if page_number < total_pages else None
+            previous_page = page_number - 1 if page_number > 1 else None
+
+
+            return Response({
+                "count": total_ventas,
+                "next": next_page,
+                "previous": previous_page,
+                "index_page": page_number - 1,
+                "length_pages": total_pages,
+                "results": ventas_json
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+'''
+
+ # Filtros adicionales por los parámetros de 'ComprobanteElectronico' (aun no se sabe si se va a usar)
+        estado = query.get('estado')
+        metodo_pago = query.get('metodo_pago')
+        tipo_comprobante = query.get('tipo_comprobante')
+        serie = query.get('serie')
+        correlativo = query.get('correlativo')
+        nombre_cliente = query.get('nombre_cliente')
+        numero_documento_cliente = query.get('numero_documento_cliente')
+        tipo_documento_cliente = query.get('tipo_documento_cliente')
+        estado_sunat = query.get('estado_sunat')
+        if serie is not "":
+            ventas = ventas.filter(comprobante__serie=serie)
+        if correlativo  is not "":
+            ventas = ventas.filter(comprobante__correlativo=correlativo)
+            
+        if nombre_cliente  is not "":
+            ventas = ventas.filter(comprobante__nombre_cliente__icontains=nombre_cliente)
+        if numero_documento_cliente  is not "":
+            ventas = ventas.filter(comprobante__numero_documento_cliente__icontains=numero_documento_cliente)
+        if tipo_documento_cliente  is not "":
+            ventas = ventas.filter(comprobante__tipo_documento_cliente=tipo_documento_cliente)
+
+
+        # Aplicar filtros solo si los valores no son None o vacíos
+        if tipo_comprobante  is not "":
+            ventas = ventas.filter(tipo_comprobante__iexact=tipo_comprobante)
+
+'''

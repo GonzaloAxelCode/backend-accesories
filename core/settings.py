@@ -53,6 +53,8 @@ INSTALLED_APPS = [
                     "apps.venta",
                     "apps.external",
                     "apps.comprobante",
+                    "apps.caja",
+                    "apps.compras",
     "ckeditor",
     "ckeditor_uploader",
     'django.contrib.sites',
@@ -134,7 +136,7 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 1000,
+    'PAGE_SIZE': 20,
 }
 
 
@@ -186,14 +188,16 @@ SIMPLE_JWT = {
 
 # Internationalization
 
+TIME_ZONE = 'America/Lima'
+USE_TZ = True  # Asegúrate de que esto esté en True
 
 LANGUAGE_CODE = 'es'
 
-TIME_ZONE = 'UTC'
+
 
 USE_I18N = True
 
-USE_TZ = True
+
 
 
 # Static files (CSS, JavaScript, Images)

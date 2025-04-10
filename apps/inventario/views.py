@@ -11,9 +11,16 @@ from apps.inventario.serializers import InventarioSerializer
 from apps.producto.models import Producto
 from apps.proveedor.models import Proveedor
 from apps.tienda.models import Tienda
-
+from rest_framework.pagination import PageNumberPagination
 from django.contrib.auth import get_user_model
 User = get_user_model()
+
+
+class InventarioPagination(PageNumberPagination):
+    page_size = 5  # Definir el número de productos por página
+    page_size_query_param = 'page_size'  # Opción para que el cliente pueda definir el tamaño de página
+    max_page_size = 100  # El tamaño máximo de la página
+
 class CrearInventario(APIView):
     def post(self, request):
         try:
@@ -54,6 +61,36 @@ class CrearInventario(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+class GetAllInventarioAPIView(APIView):
+    def get(self, request):
+        tienda_id = request.query_params.get('tienda_id')
+
+        # Filtrar por tienda si se proporciona
+        if tienda_id:
+            inventarios = Inventario.objects.filter(tienda_id=tienda_id)
+        else:
+            inventarios = Inventario.objects.all()
+
+        total_items = inventarios.count()
+        page_size = int(request.query_params.get('page_size', 5))
+        page_number = int(request.query_params.get('page', 1))
+        total_paginas = ceil(total_items / page_size)
+
+        paginator = InventarioPagination()
+        paginated_data = paginator.paginate_queryset(inventarios, request)
+        serializer = InventarioSerializer(paginated_data, many=True)
+
+        next_page = page_number + 1 if page_number < total_paginas else None
+        previous_page = page_number - 1 if page_number > 1 else None
+
+        return Response({
+            "count": total_items,
+            "next": next_page,
+            "previous": previous_page,
+            "index_page": page_number - 1,
+            "length_pages": total_paginas - 1,
+            "results": serializer.data
+        })
 class ObtenerInventarioProducto(APIView):
     def get(self, request, producto_id):
         try:
@@ -67,7 +104,7 @@ class ObtenerInventarioProducto(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class ObtenerInventarioTienda(APIView):
+class ObtenerInventarioTienda_____(APIView):
     def get(self, request, tienda_id):
         try:
             inventarios = Inventario.objects.filter(tienda__id=tienda_id)
@@ -174,3 +211,91 @@ class VerificarStock(APIView):
                 {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class ProductosConMenorStockView(APIView):
+    def get(self, request, tienda_id):
+        inventarios = (
+            Inventario.objects
+            .filter(tienda_id=tienda_id, activo=True)
+            .select_related('producto')
+            .order_by('cantidad')[:10]
+        )
+
+        data = [
+            {
+                "inventario_id": inv.id, # type: ignore
+                "producto_id": inv.producto.id, # type: ignore
+                "nombre": inv.producto.nombre,
+                "cantidad": inv.cantidad,
+            }
+            for inv in inventarios
+        ]
+
+        return Response({"lowStockProducts":data}, status=status.HTTP_200_OK)
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.pagination import PageNumberPagination
+from math import ceil
+
+from apps.inventario.models import Inventario
+from apps.inventario.serializers import InventarioSerializer
+from apps.producto.models import Producto
+
+class BuscarInventarioAPIView(APIView):
+    def post(self, request):
+        page_size = int(request.query_params.get('page_size', 5))
+        page_number = int(request.query_params.get('page', 1))
+
+        query = request.data.get('query', {})
+        nombre = query.get('nombre', "")
+        categoria = query.get('categoria', 0)
+        tienda = query.get('tienda', 0)
+        activo = query.get('activo', None)
+
+        # Si todos los filtros están vacíos
+        if not nombre and categoria == 0 and tienda == 0 and activo is None:
+            return Response({
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "index_page": page_number,
+                "length_pages": 0,
+                "results": [],
+                "search_products_found": "products_not_found"
+            }, status=status.HTTP_200_OK)
+
+        inventarios = Inventario.objects.select_related('producto').all()
+
+        # Filtros
+        if nombre:
+            inventarios = inventarios.filter(producto__nombre__icontains=nombre)
+        if categoria and categoria != 0:
+            inventarios = inventarios.filter(producto__categoria__id=categoria)
+        if tienda and tienda != 0:
+            inventarios = inventarios.filter(tienda__id=tienda)
+        if activo is not None:
+            inventarios = inventarios.filter(activo=activo)
+
+        total_inventarios = inventarios.count()
+        
+
+        paginator = InventarioPagination()
+        result_page = paginator.paginate_queryset(inventarios, request)
+        current_page = paginator.page.number - 1
+        total_pages = paginator.page.paginator.num_pages
+        next_page = current_page + 1 if paginator.page.has_next() else None
+        previous_page = current_page - 1 if paginator.page.has_previous() else None
+       
+
+        return Response({
+             "count": total_inventarios,
+            "next": next_page,
+            "previous": previous_page,
+            "index_page": current_page,
+            "length_pages": total_pages,
+            "results": InventarioSerializer(result_page, many=True).data,
+            "search_products_found": "products_found" if total_inventarios > 0 else "products_not_found"
+        }, status=status.HTTP_200_OK)

@@ -6,7 +6,7 @@ class Producto(models.Model):
     nombre = models.CharField(max_length=200)
     descripcion = models.TextField(blank=True, null=True)
     categoria = models.ForeignKey(Categoria, on_delete=models.SET_NULL, null=True)
-    categoria_nombre = models.CharField(max_length=100, blank=True, null=True)
+    '''categoria_nombre = models.CharField(max_length=100, blank=True, null=True)'''
     sku = models.CharField(max_length=50, unique=True, blank=True)
     marca = models.CharField(max_length=100, blank=True, null=True)
     modelo = models.CharField(max_length=100, blank=True, null=True)
