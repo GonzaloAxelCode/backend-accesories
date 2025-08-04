@@ -22,7 +22,7 @@ from apps.comprobante.models import ComprobanteElectronico
 from apps.inventario.models import Inventario
 from apps.venta.serialzers import VentaSerializer
 from .models import Venta, VentaProducto, Tienda, Producto
-SUNAT_PHP = "http://localhost:8080"
+SUNAT_PHP = "https://api-sunat-basic.onrender.com"
 from django.contrib.auth import get_user_model
 User = get_user_model()
 from django.db.models import Max
@@ -38,7 +38,6 @@ class VentaPagination(PageNumberPagination):
     
 class RegistrarVentaView(APIView):
     def post(self, request):
-       
         try:
             data = request.data
            

@@ -1,5 +1,5 @@
 {
     "python.analysis.autoImportCompletions": true,
     "python.analysis.typeCheckingMode": "standard",
-    "workbench.colorTheme": "One Dark Pro Darker"
+    "workbench.colorTheme": "Gruvbox Dark Hard-flymin"
 }

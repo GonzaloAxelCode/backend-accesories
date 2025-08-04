@@ -46,11 +46,11 @@ class CajaAbiertaView(APIView):
 
 class IniciarCajaView(APIView):
     def post(self, request, *args, **kwargs):
-        # Obtener los datos directamente desde request.data
+        
         tienda_id = request.data.get('tienda_id')
         usuario_id = request.data.get('usuario_id')  # ID del usuario
         saldo_inicial = request.data.get('saldo_inicial')
-
+        print(tienda_id , usuario_id, saldo_inicial)
         # Validar que los campos necesarios están presentes
         if not tienda_id or not usuario_id or saldo_inicial is None:
             return Response({
@@ -59,11 +59,11 @@ class IniciarCajaView(APIView):
 
         # Obtener la instancia del usuario con el id proporcionado
         usuario_apertura = get_object_or_404(User, id=usuario_id)
-
+        
         # Verificamos si ya existe una caja abierta para la tienda (sin importar el día)
         try:
             caja_abierta = Caja.objects.get(tienda_id=tienda_id, estado='abierta')
-
+            
             # Si la caja está abierta, no podemos abrir una nueva
             return Response({
                 "caja_is_open": True,
@@ -73,6 +73,7 @@ class IniciarCajaView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         except Caja.DoesNotExist:
+            
             # Si no existe una caja abierta, creamos una nueva caja
             caja = Caja.objects.create(
                 tienda_id=tienda_id,
@@ -95,7 +96,10 @@ class IniciarCajaView(APIView):
                 "caja": caja_data,
                 "operaciones": operaciones_data
             }, status=status.HTTP_201_CREATED)
-            
+        except Exception as e: 
+            return Response({
+                "message": f"Error al iniciar la caja: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class RealizarGastoView(APIView):
