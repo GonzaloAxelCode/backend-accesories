@@ -1,5 +1,8 @@
 from django.db import models
 
+from apps import tienda
+from apps.tienda.models import Tienda
+
 # Create your models here.
 #
 class Proveedor(models.Model):
@@ -12,7 +15,7 @@ class Proveedor(models.Model):
     activo = models.BooleanField(default=True)
     tipo_producto = models.CharField(max_length=100)
     calificacion = models.IntegerField(default=0)
-
+    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE,default=1, related_name='proveedores') # type: ignore
 
     def __str__(self):
         return self.nombre

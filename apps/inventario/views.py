@@ -1,3 +1,4 @@
+from sre_parse import State
 from django.shortcuts import render
 
 # Create your views here.
@@ -24,15 +25,17 @@ class InventarioPagination(PageNumberPagination):
 class CrearInventario(APIView):
     def post(self, request):
         try:
+            
             data = request.data
+            print(data.get("tienda"))
             producto = get_object_or_404(Producto, id=data.get("producto"))
             tienda = get_object_or_404(Tienda, id=data.get("tienda"))
             proveedor = get_object_or_404(Proveedor, id=data.get("proveedor"))
             user = get_object_or_404(User, id=data.get("responsable"))
             # Verificar si ya existe un inventario con el mismo producto y tienda
-            if Inventario.objects.filter(producto=producto, tienda=tienda).exists():
+            if Inventario.objects.filter(producto=producto, tienda=tienda,proveedor=proveedor).exists():
                 return Response(
-                    {"message": "Ya existe un inventario con este producto en esta tienda.","string_err": "inventario_existente"},
+                    {"message": "Ya existe un inventario con este producto y proveedor para esta tienda.","string_err": "inventario_existente"},
                     status=status.HTTP_400_BAD_REQUEST
                 ) 
 
@@ -65,11 +68,9 @@ class GetAllInventarioAPIView(APIView):
     def get(self, request):
         tienda_id = request.query_params.get('tienda_id')
 
-        # Filtrar por tienda si se proporciona
-        if tienda_id:
-            inventarios = Inventario.objects.filter(tienda_id=tienda_id)
-        else:
-            inventarios = Inventario.objects.all()
+       
+        inventarios = Inventario.objects.filter(tienda_id=tienda_id)
+       
 
         total_items = inventarios.count()
         page_size = int(request.query_params.get('page_size', 5))
@@ -216,7 +217,7 @@ class ProductosConMenorStockView(APIView):
     def get(self, request, tienda_id):
         inventarios = (
             Inventario.objects
-            .filter(tienda_id=tienda_id, activo=True)
+            .filter(tienda_id=tienda_id)
             .select_related('producto')
             .order_by('cantidad')[:10]
         )

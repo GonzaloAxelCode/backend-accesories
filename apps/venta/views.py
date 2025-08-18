@@ -23,6 +23,7 @@ from apps.inventario.models import Inventario
 from apps.venta.serialzers import VentaSerializer
 from .models import Venta, VentaProducto, Tienda, Producto
 SUNAT_PHP = "https://api-sunat-basic.onrender.com"
+SUNAT_PHP_ =  "http://localhost:8080"
 from django.contrib.auth import get_user_model
 User = get_user_model()
 from django.db.models import Max
@@ -295,6 +296,130 @@ class RegistrarVentaView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+
+
+
+
+class RegistrarVentaSinComprobanteView(APIView):
+    def post(self, request):
+        try:
+            data = request.data
+
+            # Validar datos obligatorios
+            if not all(k in data for k in ["tiendaId", "usuarioId", "metodoPago", "tipoComprobante", "productos"]):
+                return Response({"error": "Faltan datos obligatorios"}, status=status.HTTP_400_BAD_REQUEST)
+
+            tienda = get_object_or_404(Tienda, id=data["tiendaId"])
+            usuario = get_object_or_404(User, id=data["usuarioId"])
+            cliente_data = data.get("cliente", {})
+
+            # Fecha aware
+            fecha_hora_aware = timezone.make_aware(datetime.now())
+
+            with transaction.atomic():
+                # Crear venta
+                venta = Venta.objects.create(
+                    usuario=usuario,
+                    tienda=tienda,
+                    metodo_pago=data["metodoPago"],
+                    tipo_comprobante=data["tipoComprobante"],
+                    fecha_hora=fecha_hora_aware,
+                    estado="Pendiente",  
+                    
+                )
+
+                subtotal = Decimal(0)
+                gravado_total = Decimal(0)
+                igv_total = Decimal(0)
+                total = Decimal(0)
+                exonerado_total = Decimal(0)
+
+                productos_registrados = []
+
+                for item in data["productos"]:
+                    inventario = get_object_or_404(Inventario, id=item["inventarioId"])
+                    producto = inventario.producto
+                    cantidad = int(item["cantidad_final"])
+
+                    precio_unitario = Decimal(inventario.costo_venta)  # type: ignore # con IGV
+                    porcentaje_igv = Decimal("18.00")
+                    valor_unitario = precio_unitario / (Decimal("1.00") + (porcentaje_igv / Decimal("100.00")))
+                    valor_venta = cantidad * valor_unitario
+                    igv = valor_venta * (porcentaje_igv / Decimal("100.00"))
+                    total_impuestos = igv
+
+                    # Guardar venta producto
+                    VentaProducto.objects.create(
+                        venta=venta,
+                        producto=producto,
+                        cantidad=cantidad,
+                        valor_unitario=valor_unitario,
+                        valor_venta=valor_venta,
+                        base_igv=valor_venta,
+                        porcentaje_igv=porcentaje_igv,
+                        igv=igv,
+                        tipo_afectacion_igv="10",
+                        total_impuestos=total_impuestos,
+                        precio_unitario=precio_unitario
+                    )
+
+                    inventario.cantidad -= cantidad
+                    inventario.save()
+
+                    subtotal += valor_venta
+                    gravado_total += valor_venta
+                    igv_total += igv
+                    total += precio_unitario * cantidad
+
+                    productos_registrados.append({
+                        "producto_id": producto.id, # type: ignore
+                        "producto_nombre": producto.nombre,
+                        "cantidad": cantidad,
+                        "valor_unitario": float(valor_unitario),
+                        "valor_venta": float(valor_venta),
+                        "igv": float(igv),
+                        "precio_unitario": float(precio_unitario)
+                    })
+                venta.estado = "Pendiente"  # Cambiar estado a Registrada
+                venta.subtotal = subtotal
+                venta.gravado_total = gravado_total
+                venta.igv_total = igv_total
+                venta.total = total
+                venta.productos_json = productos_registrados
+                venta.save()
+
+                venta_json = {
+                    "id": venta.id, # type: ignore
+                    "usuario": usuario.id, # type: ignore
+                    "tienda": tienda.id, # type: ignore
+                    "metodo_pago": venta.metodo_pago,
+                    "tipo_comprobante": venta.tipo_comprobante,
+                    "estado": venta.estado,
+                    "activo": venta.activo,
+                    "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
+                    "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
+                    "subtotal": float(subtotal),
+                    "gravado_total": float(gravado_total),
+                    "igv_total": float(igv_total),
+                    "total": float(total),
+                    "productos_json": json.dumps(productos_registrados),
+                    "productos": productos_registrados,
+                    "comprobante_data":None ,                
+                    "comprobante": None  
+                }
+                
+                return Response(venta_json, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+
+
+
 class VentasPorTiendaView__(APIView):
     def get(self, request, tienda_id):
         
@@ -368,9 +493,12 @@ class VentasPorTiendaView__(APIView):
                 "productos": productos_json,
                 "total":venta.total,
                 "productos_json" :json.dumps(venta.productos_json, indent=4),
-                "comprobante": comprobante_json
+                "comprobante": comprobante_json,  "subtotal": float(venta.subtotal),
+                "gravado_total": float(venta.gravado_total),
+                "igv_total": float(venta.igv_total),
+                "sub_total": float(venta.subtotal),
             })
-
+        
         return Response(ventas_json, status=status.HTTP_200_OK)
 
 
@@ -848,6 +976,9 @@ class VentasPorTiendaView(APIView):
                     "tipo_comprobante": venta.tipo_comprobante,
                     "productos": productos_json,
                     "total": venta.total,
+                    "subtotal": float(venta.subtotal),
+                    "gravado_total": float(venta.gravado_total),
+                    "igv_total": float(venta.igv_total),
                     "productos_json": json.dumps(venta.productos_json, indent=4),
                     "comprobante": comprobante_json
                 })

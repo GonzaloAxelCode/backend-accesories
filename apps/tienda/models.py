@@ -10,7 +10,10 @@ class Tienda(models.Model):
     ciudad = models.CharField(max_length=100, null=True, blank=True)
     telefono = models.CharField(max_length=15)
     activo = models.BooleanField(default=True, null=True)
-    encargado = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    
+    encargado = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="tienda_encargada"
+    )
     capacidad = models.IntegerField( null=True, blank=True)
     ruc = models.CharField(max_length=15)
     imagen = models.ImageField(upload_to='tiendas/', null=True, blank=True)

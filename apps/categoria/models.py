@@ -1,5 +1,7 @@
 from django.db import models
 
+from apps.tienda.models import Tienda
+
 # Create your models here.
 #
 class Categoria(models.Model):
@@ -13,6 +15,7 @@ class Categoria(models.Model):
     orden = models.IntegerField(default=0)
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True)
     destacado = models.BooleanField(default=False)
+    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE,default=1, related_name='categorias') # type: ignore
     color = models.CharField(max_length=50, blank=True)
     siglas_nombre_categoria = models.CharField(max_length=10, blank=True,null=True)
     def __str__(self):

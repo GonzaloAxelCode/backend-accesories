@@ -1,6 +1,8 @@
 from django.db import models
+from apps import tienda
 from apps.categoria.models import Categoria
 from apps.proveedor.models import Proveedor
+from apps.tienda.models import Tienda
 
 class Producto(models.Model):
     nombre = models.CharField(max_length=200)
@@ -14,7 +16,7 @@ class Producto(models.Model):
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
     activo = models.BooleanField(default=True)
-    
+    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE,default=1) # type: ignore
 
     def save(self, *args, **kwargs):
         if not self.sku and self.categoria:

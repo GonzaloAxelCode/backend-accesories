@@ -15,9 +15,6 @@ from django.db import transaction
         
 User = get_user_model()
 
-
-
-
 class GetAllUsersAPIView(APIView):
     permission_classes = [IsSuperUser]
 
@@ -114,30 +111,25 @@ class GetUserAPIView(APIView):
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
-class CreateUserAPIView(APIView):
+    
+    
+    
+class CreateUserInTiendaAPIView(APIView):
     def post(self, request):
-        # Serializar los datos enviados
-        serializer = UserAccountSerializer(data=request.data)
+        # Verificar si el usuario tiene permiso
+        if not request.user.has_perm("apps.user.can_create_user"):
+            return Response({"error": "No tiene permiso para crear usuarios"}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Clonar los datos enviados y forzar la tienda del usuario logueado
+        data = request.data.copy()
+        data["tienda"] = request.user.tienda.id  # <- fuerza la tienda propia
 
+        serializer = UserAccountSerializer(data=data)
         if serializer.is_valid():
-            # Crear el usuario utilizando el método `create` del serializador
-            user = serializer.save()
-            return Response(
-                {
-                    "message": "Usuario creado exitosamente",
-                    "user": serializer.data,
-                },
-                status=status.HTTP_201_CREATED,
-            )
-
-        # Responder con los errores de validación si los datos no son válidos
-        return Response(
-            {
-                "message": "Error al crear el usuario",
-                "errors": serializer.errors,
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+            serializer.save()
+            return Response({"message": "Usuario creado exitosamente", "usuario": serializer.data}, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
 class UpdateUserAPIView(APIView):
     def put(self, request, id):

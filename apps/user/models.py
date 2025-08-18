@@ -2,6 +2,9 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 
+from apps import tienda
+from apps.tienda.models import Tienda
+
 
 class UserManager(BaseUserManager):
     def create_user(self, username, password=None, **extra_fields):
@@ -35,7 +38,9 @@ class UserAccount(AbstractBaseUser, PermissionsMixin):
     is_superuser = models.BooleanField(default=False)
     es_empleado = models.BooleanField(default=False)
     desactivate_account = models.BooleanField(default=False)
-
+    tienda = models.ForeignKey(
+       Tienda, on_delete=models.CASCADE, default=1, related_name='users_tienda' # type: ignore
+    )
     objects = UserManager()
 
     USERNAME_FIELD = "username"
@@ -67,6 +72,8 @@ class UserAccount(AbstractBaseUser, PermissionsMixin):
             ("view_category", "Puede ver las categorías"),
             ("view_supplier", "Puede ver los proveedores"),
             ("view_store", "Puede ver las tiendas"),
+            ("can_create_user", "Puede crear nuevos usuarios")
+
         ]
 
 

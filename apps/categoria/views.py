@@ -7,22 +7,26 @@ from rest_framework import status
 from django.shortcuts import get_object_or_404
 
 from apps.categoria.serializers import CategoriaSerializer
+from apps.tienda.models import Tienda
 from .models import Categoria
 
 
 # Crear una nueva categoria
 class CreateCategoria(APIView):
     def post(self, request):
+        data = request.data
+        tienda = get_object_or_404(Tienda, id=data.get("tienda"))
         serializer = CategoriaSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
+            serializer.save(tienda=tienda)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # Obtener todas las categorias
 class GetAllCategorias(APIView):
     def get(self, request):
-        categorias = Categoria.objects.all()
+        tienda = request.query_params.get('tienda')
+        categorias = Categoria.objects.filter(tienda=tienda) 
         serializer = CategoriaSerializer(categorias, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 

@@ -1,9 +1,10 @@
 from django.urls import path
 
-from apps.venta.views import CancelarVentaView, EliminarVentaView, ProductosMasVendidosView, RegistrarVentaView, VentaBusquedaView, VentaSalesByDateView, VentasPerDayOrMonth, VentasPorTiendaView, VentasResumenView
+from apps.venta.views import CancelarVentaView, EliminarVentaView, ProductosMasVendidosView, RegistrarVentaSinComprobanteView, RegistrarVentaView, VentaBusquedaView, VentaSalesByDateView, VentasPerDayOrMonth, VentasPorTiendaView, VentasResumenView
 KEY_DEVELOPMENT_ACTIONS = "secret"
 urlpatterns = [
     path('ventas/crear/', RegistrarVentaView.as_view(), name='crear_venta'),
+    path('ventas/crear/sin_comprobante/', RegistrarVentaSinComprobanteView.as_view(), name='crear_venta_sin_comprobante'),
     path('ventas/tienda/', VentasPorTiendaView.as_view(), name='ventas-por-tienda'),
     path('ventas/cancelar/<int:venta_id>/', CancelarVentaView.as_view(), name='cancelar-venta'),
     path(f'ventas/delete/{KEY_DEVELOPMENT_ACTIONS}/<int:venta_id>/', EliminarVentaView.as_view()),

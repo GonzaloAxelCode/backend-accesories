@@ -57,25 +57,37 @@ class UserSerializer(serializers.ModelSerializer):
 class UserAccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAccount
-        
         fields = '__all__'
         extra_kwargs = {'password': {'write_only': True}}
 
     def create(self, validated_data):
-        user = UserAccount.objects.create_user( # type: ignore
+        # Extraer tienda_id si viene del frontend
+        tienda = validated_data.pop('tienda', None)
+
+        # Crear el usuario
+        user = UserAccount.objects.create_user(  # type: ignore
             username=validated_data['username'],
             password=validated_data['password'],
             first_name=validated_data.get('first_name', ''),
             last_name=validated_data.get('last_name', ''),
-            photo_url=validated_data.get('photo_url', "https://res.cloudinary.com/ddksrkond/image/upload/v1688411778/default_dfvymc.webp"),
-            is_active=validated_data.get('is_active', True)
+            photo_url=validated_data.get(
+                'photo_url',
+                "https://res.cloudinary.com/ddksrkond/image/upload/v1688411778/default_dfvymc.webp"
+            ),
+            is_active=validated_data.get('is_active', True),
+            tienda=tienda  # asignar la tienda directamente
         )
         return user
-
+    
+    
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         data["user_id"] = self.user.id  # type: ignore # Agrega el ID del usuario
+        data["tienda_id"] = self.user.tienda.id  # type: ignore # <- Agrega la tienda asociada
+        data["is_superuser"] = self.user.is_superuser # type: ignore
+        data["es_empleado"] = self.user.es_empleado # type: ignore
+
         print(data)  
         return data
 class UpdatePasswordAPIView(APIView):

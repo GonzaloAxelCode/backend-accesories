@@ -6,6 +6,9 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+
+from apps import tienda
+from apps.tienda.models import Tienda
 from .models import Producto
 from .serializers import ProductoSerializer
 from rest_framework.pagination import PageNumberPagination
@@ -19,7 +22,9 @@ class ProductoPagination(PageNumberPagination):
 
 class BuscarProductoAPIView(APIView):
     def post(self, request):
+        
         query = request.data.get('query', {})
+        tienda = get_object_or_404(Tienda, id=request.data.get("tienda"))
         nombre = query.get('nombre', "")
         categoria = query.get('categoria', 0)
         activo = query.get('activo', None)
@@ -36,7 +41,7 @@ class BuscarProductoAPIView(APIView):
             })
 
         # Filtrar productos
-        productos = Producto.objects.all()
+        productos = Producto.objects.filter(tienda=tienda)
         if nombre:
             productos = productos.filter(nombre__icontains=nombre)
         if categoria and categoria != 0:
@@ -66,39 +71,37 @@ class BuscarProductoAPIView(APIView):
         })
         
         
+
 class GetAllProductosAPIView(APIView):
     def get(self, request):
-            productos = Producto.objects.all()
-            total_productos = productos.count()
-            page_size = int(request.query_params.get('page_size', 5))
-            page_number = int(request.query_params.get('page', 1))
-            total_paginas = ceil(total_productos / page_size)
+        tienda_id = request.query_params.get('tienda')
+        # Aseguramos que la tienda exista
+        tienda = get_object_or_404(Tienda, id=tienda_id)
 
-            paginator = ProductoPagination()
-            paginated_products = paginator.paginate_queryset(productos, request)
-            serializer = ProductoSerializer(paginated_products, many=True)
+        # Queryset con orden definido
+        productos = Producto.objects.filter(tienda=tienda).order_by('id')  # <- importante el order_by
+        total_productos = productos.count()
 
-            next_page = page_number + 1 if page_number < total_paginas else None
-            previous_page = page_number - 1 if page_number > 1 else None
+        page_size = int(request.query_params.get('page_size', 5))
+        page_number = int(request.query_params.get('page', 1))
+        total_paginas = ceil(total_productos / page_size)
 
-            return Response({
-                "count": total_productos,
-                "next": next_page,
-                "previous": previous_page,
-                "index_page": page_number - 1,
-                "length_pages": total_paginas - 1,
-                "results": serializer.data
-            })
-# Obtener todos los productos
-class GetAllProductosAPIView___(APIView):
-    def get(self, request):
-        productos = Producto.objects.all()
-        serializer = ProductoSerializer(productos, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        # Paginación
+        paginator = ProductoPagination()
+        paginated_products = paginator.paginate_queryset(productos, request)
+        serializer = ProductoSerializer(paginated_products, many=True)
 
+        next_page = page_number + 1 if page_number < total_paginas else None
+        previous_page = page_number - 1 if page_number > 1 else None
 
-
-        
+        return Response({
+            "count": total_productos,
+            "next": next_page,
+            "previous": previous_page,
+            "index_page": page_number - 1,
+            "length_pages": total_paginas - 1,
+            "results": serializer.data
+        })
         
 # Obtener un solo producto
 class GetProductoAPIView(APIView):
@@ -108,15 +111,40 @@ class GetProductoAPIView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 # Crear un nuevo producto
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.shortcuts import get_object_or_404
+from apps.producto.models import Producto, Tienda
+from apps.producto.serializers import ProductoSerializer
+
 class CreateProductoAPIView(APIView):
     def post(self, request):
-        serializer = ProductoSerializer(data=request.data)
+        data = request.data
+        tienda = get_object_or_404(Tienda, id=data.get("tienda"))
+
+        # Verificar duplicados por nombre o descripción en la misma tienda
+        if Producto.objects.filter(tienda=tienda, nombre=data.get("nombre")).exists():
+            return Response(
+                {"error": "Ya existe un producto con ese nombre en esta tienda."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if Producto.objects.filter(tienda=tienda, descripcion=data.get("descripcion")).exists():
+            return Response(
+                {"error": "Ya existe un producto con esa descripción en esta tienda."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Crear producto
+        serializer = ProductoSerializer(data=data)
         if serializer.is_valid():
-            serializer.save()
+            serializer.save(tienda=tienda)
             return Response({
                 "message": "Producto creado exitosamente",
                 "producto": serializer.data
             }, status=status.HTTP_201_CREATED)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # Actualizar un producto
