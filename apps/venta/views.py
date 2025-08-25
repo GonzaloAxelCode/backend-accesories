@@ -27,7 +27,7 @@ SUNAT_PHP_ =  "http://localhost:8080"
 from django.contrib.auth import get_user_model
 User = get_user_model()
 from django.db.models import Max
-
+from datetime import date, timedelta
 from django.utils import timezone
 from django.utils.timezone import localtime, make_aware
 
@@ -41,9 +41,9 @@ class RegistrarVentaView(APIView):
     def post(self, request):
         try:
             data = request.data
-           
+
             # Validar que los datos obligatorios existan
-            if not all(k in data for k in ["tiendaId", "usuarioId", "metodoPago", "tipoComprobante", "productos"]):
+            if not all(k in data for k in ["usuarioId", "metodoPago", "tipoComprobante", "productos"]):
                 return Response({"error": "Faltan datos obligatorios"}, status=status.HTTP_400_BAD_REQUEST)
             def obtener_siguiente_serie_y_correlativo(tipo_comprobante):
                 """
@@ -78,8 +78,11 @@ class RegistrarVentaView(APIView):
                 return nueva_serie, nuevo_correlativo
 
             # Buscar la tienda y el usuario por ID
-            tienda = get_object_or_404(Tienda, id=data["tiendaId"])
-            usuario = get_object_or_404(User, id=data["usuarioId"])
+            tienda = request.user.tienda
+            if not request.user.is_superuser:
+                return Response({"error": "No tienes permisos para realizar esta acción."}, status=status.HTTP_403_FORBIDDEN)
+
+            usuario = request.user.id
             cliente_data = data["cliente"]
             
             fecha_hora_naive = datetime.now()  # Esto es naive
@@ -306,11 +309,14 @@ class RegistrarVentaSinComprobanteView(APIView):
             data = request.data
 
             # Validar datos obligatorios
-            if not all(k in data for k in ["tiendaId", "usuarioId", "metodoPago", "tipoComprobante", "productos"]):
+            if not all(k in data for k in ["metodoPago", "tipoComprobante", "productos"]):
                 return Response({"error": "Faltan datos obligatorios"}, status=status.HTTP_400_BAD_REQUEST)
 
-            tienda = get_object_or_404(Tienda, id=data["tiendaId"])
-            usuario = get_object_or_404(User, id=data["usuarioId"])
+            tienda = request.user.tienda
+            if not request.user.is_superuser:
+                return Response({"error": "No tienes permisos para realizar esta acción."}, status=status.HTTP_403_FORBIDDEN)
+
+            usuario =request.user.id
             cliente_data = data.get("cliente", {})
 
             # Fecha aware
@@ -421,11 +427,10 @@ class RegistrarVentaSinComprobanteView(APIView):
 
 
 class VentasPorTiendaView__(APIView):
-    def get(self, request, tienda_id):
+    def get(self, request):
         
         # Obtener la tienda o devolver 404 si no existe
-        tienda = get_object_or_404(Tienda, id=tienda_id)
-
+        tienda = request.user.tienda
         # Obtener todas las ventas de la tienda
         ventas = Venta.objects.filter(tienda=tienda)
 
@@ -544,10 +549,8 @@ class VentasResumenView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, *args, **kwargs):
-        tienda_id = request.data.get("tienda_id")
-        if not tienda_id:
-            return Response({"error": "Se requiere el ID de la tienda."}, status=400)
-        
+        tienda_id = request.user.tienda
+     
         # Obtener la fecha y hora actual en la zona horaria de Lima, Perú
         today = localtime(now()).date()
         start_of_week = today - timedelta(days=today.weekday())
@@ -587,7 +590,7 @@ class VentaSalesByDateView(APIView):
         # Obtener los rangos de fechas desde el cuerpo de la solicitud
         from_date = request.data.get('from_date')  # Expected format: [2025, 0, 1] para enero
         to_date = request.data.get('to_date')  # Expected format: [2025, 3, 1] para abril
-        tienda_id = request.data.get('tienda_id')  # tienda_id
+        tienda_id = request.user.tienda# tienda_id
 
         if not from_date or not to_date:
             return Response({"error": "Se debe proporcionar un rango de fechas válido"}, status=status.HTTP_400_BAD_REQUEST)
@@ -638,7 +641,7 @@ class ProductosMasVendidosView(APIView):
     def post(self, request):
         from_date = request.data.get('from_date')  # [2025, 0, 1]
         to_date = request.data.get('to_date')      # [2025, 3, 1]
-        tienda_id = request.data.get('tienda_id')
+        tienda_id = request.user.tienda
 
         if not from_date or not to_date or not tienda_id:
             return Response({"error": "Se requieren 'from_date', 'to_date' y 'tienda_id'"}, status=status.HTTP_400_BAD_REQUEST)
@@ -674,14 +677,14 @@ class ProductosMasVendidosView(APIView):
         ]
 
         return Response({"topProductoMostSales":data}, status=status.HTTP_200_OK)
-from datetime import date, timedelta
+
  
 
 class VentasPerDayOrMonth(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, *args, **kwargs):
-        tienda_id = request.data.get("tienda_id")
+        tienda_id = request.user.tienda
         year = int(request.data.get("year", 0))
         month = int(request.data.get("month", 0))
         day = int(request.data.get("day", 0))
@@ -744,7 +747,7 @@ class VentaBusquedaView(APIView):
         
             page_number = int(request.data.get('page', 1))
             page_size = int(request.data.get('page_size', 5))
-            tienda_id = request.data.get('tienda_id')
+            tienda_id = request.user.tienda
             query = request.data.get('query', {})
             ventas = Venta.objects.all()
             ventas = ventas.filter(tienda_id=tienda_id)
@@ -896,7 +899,7 @@ class VentasPorTiendaView(APIView):
             # Obtener parámetros de la URL
             page_size = int(request.query_params.get('page_size', 5))
             page_number = int(request.query_params.get('page', 1))
-            tienda_id = request.query_params.get('tienda_id')
+            tienda_id = request.user.tienda
             
             # Filtro por fecha (ahora espera strings en formato YYYY-MM-DD)
             from_date_str = request.query_params.get('from_date')
@@ -1002,35 +1005,3 @@ class VentasPorTiendaView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
-
-'''
-
- # Filtros adicionales por los parámetros de 'ComprobanteElectronico' (aun no se sabe si se va a usar)
-        estado = query.get('estado')
-        metodo_pago = query.get('metodo_pago')
-        tipo_comprobante = query.get('tipo_comprobante')
-        serie = query.get('serie')
-        correlativo = query.get('correlativo')
-        nombre_cliente = query.get('nombre_cliente')
-        numero_documento_cliente = query.get('numero_documento_cliente')
-        tipo_documento_cliente = query.get('tipo_documento_cliente')
-        estado_sunat = query.get('estado_sunat')
-        if serie is not "":
-            ventas = ventas.filter(comprobante__serie=serie)
-        if correlativo  is not "":
-            ventas = ventas.filter(comprobante__correlativo=correlativo)
-            
-        if nombre_cliente  is not "":
-            ventas = ventas.filter(comprobante__nombre_cliente__icontains=nombre_cliente)
-        if numero_documento_cliente  is not "":
-            ventas = ventas.filter(comprobante__numero_documento_cliente__icontains=numero_documento_cliente)
-        if tipo_documento_cliente  is not "":
-            ventas = ventas.filter(comprobante__tipo_documento_cliente=tipo_documento_cliente)
-
-
-        # Aplicar filtros solo si los valores no son None o vacíos
-        if tipo_comprobante  is not "":
-            ventas = ventas.filter(tipo_comprobante__iexact=tipo_comprobante)
-
-'''

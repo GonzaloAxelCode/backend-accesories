@@ -1,47 +1,37 @@
 from math import ceil
-from django.shortcuts import render
-
-# Create your views here.
+from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
-
-from apps import tienda
-from apps.tienda.models import Tienda
-from .models import Producto
-from .serializers import ProductoSerializer
 from rest_framework.pagination import PageNumberPagination
 
+from apps.producto.models import Producto
+from apps.producto.serializers import ProductoSerializer
 
+
+# ---------- PAGINACIÓN ----------
 class ProductoPagination(PageNumberPagination):
-    page_size = 5  # Definir el número de productos por página
-    page_size_query_param = 'page_size'  # Opción para que el cliente pueda definir el tamaño de página
-    max_page_size = 100  # El tamaño máximo de la página
+    page_size = 5
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 
+# ---------- BUSCAR PRODUCTOS ----------
 class BuscarProductoAPIView(APIView):
     def post(self, request):
-        
         query = request.data.get('query', {})
-        tienda = get_object_or_404(Tienda, id=request.data.get("tienda"))
+
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response({"error": "El usuario no tiene una tienda asignada."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
         nombre = query.get('nombre', "")
         categoria = query.get('categoria', 0)
         activo = query.get('activo', None)
 
-        if not nombre and categoria == 0 and activo is None:
-            return Response({
-                "count": 0,
-                "next": None,
-                "previous": None,
-                "index_page": 0,
-                "length_pages": 0,
-                "results": [],
-                "search_products_found": "products_not_found"
-            })
-
-        # Filtrar productos
         productos = Producto.objects.filter(tienda=tienda)
+
         if nombre:
             productos = productos.filter(nombre__icontains=nombre)
         if categoria and categoria != 0:
@@ -51,7 +41,7 @@ class BuscarProductoAPIView(APIView):
 
         total_productos = productos.count()
 
-        # Aplicar paginación
+        # Paginación
         paginator = ProductoPagination()
         result_page = paginator.paginate_queryset(productos, request)
 
@@ -69,17 +59,17 @@ class BuscarProductoAPIView(APIView):
             "results": ProductoSerializer(result_page, many=True).data,
             "search_products_found": "products_found" if total_productos > 0 else "products_not_found"
         })
-        
-        
 
+
+# ---------- LISTAR TODOS LOS PRODUCTOS ----------
 class GetAllProductosAPIView(APIView):
     def get(self, request):
-        tienda_id = request.query_params.get('tienda')
-        # Aseguramos que la tienda exista
-        tienda = get_object_or_404(Tienda, id=tienda_id)
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response({"error": "El usuario no tiene una tienda asignada."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        # Queryset con orden definido
-        productos = Producto.objects.filter(tienda=tienda).order_by('id')  # <- importante el order_by
+        productos = Producto.objects.filter(tienda=tienda).order_by('id')
         total_productos = productos.count()
 
         page_size = int(request.query_params.get('page_size', 5))
@@ -102,41 +92,39 @@ class GetAllProductosAPIView(APIView):
             "length_pages": total_paginas - 1,
             "results": serializer.data
         })
-        
-# Obtener un solo producto
+
+
+# ---------- OBTENER UN SOLO PRODUCTO ----------
 class GetProductoAPIView(APIView):
     def get(self, request, id):
-        producto = get_object_or_404(Producto, id=id)
+        tienda = getattr(request.user, "tienda", None)
+        producto = get_object_or_404(Producto, id=id, tienda=tienda)
         serializer = ProductoSerializer(producto)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-# Crear un nuevo producto
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from django.shortcuts import get_object_or_404
-from apps.producto.models import Producto, Tienda
-from apps.producto.serializers import ProductoSerializer
 
+# ---------- CREAR UN PRODUCTO ----------
 class CreateProductoAPIView(APIView):
     def post(self, request):
         data = request.data
-        tienda = get_object_or_404(Tienda, id=data.get("tienda"))
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response({"error": "El usuario no tiene una tienda asignada."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        # Verificar duplicados por nombre o descripción en la misma tienda
+        # Verificar duplicados
         if Producto.objects.filter(tienda=tienda, nombre=data.get("nombre")).exists():
             return Response(
-                {"error": "Ya existe un producto con ese nombre en esta tienda."},
+                {"error": "Ya existe un producto con ese nombre en tu tienda."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         if Producto.objects.filter(tienda=tienda, descripcion=data.get("descripcion")).exists():
             return Response(
-                {"error": "Ya existe un producto con esa descripción en esta tienda."},
+                {"error": "Ya existe un producto con esa descripción en tu tienda."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Crear producto
         serializer = ProductoSerializer(data=data)
         if serializer.is_valid():
             serializer.save(tienda=tienda)
@@ -147,10 +135,13 @@ class CreateProductoAPIView(APIView):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# Actualizar un producto
+
+# ---------- ACTUALIZAR PRODUCTO ----------
 class UpdateProductoAPIView(APIView):
     def put(self, request, id):
-        producto = get_object_or_404(Producto, id=id)
+        tienda = getattr(request.user, "tienda", None)
+        producto = get_object_or_404(Producto, id=id, tienda=tienda)
+
         serializer = ProductoSerializer(producto, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -160,13 +151,13 @@ class UpdateProductoAPIView(APIView):
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# Eliminar un producto
+
+# ---------- ELIMINAR PRODUCTO ----------
 class DeleteProductoAPIView(APIView):
     def delete(self, request, id):
-        producto = get_object_or_404(Producto, id=id)
+        tienda = getattr(request.user, "tienda", None)
+        producto = get_object_or_404(Producto, id=id, tienda=tienda)
         producto.delete()
         return Response({
             "message": "Producto eliminado exitosamente"
         }, status=status.HTTP_204_NO_CONTENT)
-
-

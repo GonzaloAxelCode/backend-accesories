@@ -61,7 +61,7 @@ class UserAccountSerializer(serializers.ModelSerializer):
         extra_kwargs = {'password': {'write_only': True}}
 
     def create(self, validated_data):
-        # Extraer tienda_id si viene del frontend
+        
         tienda = validated_data.pop('tienda', None)
 
         # Crear el usuario
@@ -84,7 +84,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         data["user_id"] = self.user.id  # type: ignore # Agrega el ID del usuario
-        data["tienda_id"] = self.user.tienda.id  # type: ignore # <- Agrega la tienda asociada
+        data["tienda"] = self.user.tienda.id  # type: ignore # <- Agrega la tienda asociada
         data["is_superuser"] = self.user.is_superuser # type: ignore
         data["es_empleado"] = self.user.es_empleado # type: ignore
 

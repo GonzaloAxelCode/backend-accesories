@@ -11,13 +11,14 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.utils.timezone import now
 from django.db.models import Q
+from apps import tienda
 from apps.caja.models import Caja, OperacionCaja
 from apps.caja.serializers import CajaSerializer, OperacionCajaSerializer
 from django.contrib.auth import get_user_model
 User = get_user_model()
 class CajaAbiertaView(APIView):
-    def get(self, request, tienda_id):
-        
+    def get(self, request):
+        tienda_id =request.user.tienda
 
         try:
             caja = Caja.objects.get(
@@ -46,9 +47,9 @@ class CajaAbiertaView(APIView):
 
 class IniciarCajaView(APIView):
     def post(self, request, *args, **kwargs):
-        
-        tienda_id = request.data.get('tienda_id')
-        usuario_id = request.data.get('usuario_id')  # ID del usuario
+        tienda_id =request.user.tienda
+       
+        usuario_id = request.user.id
         saldo_inicial = request.data.get('saldo_inicial')
         print(tienda_id , usuario_id, saldo_inicial)
         # Validar que los campos necesarios están presentes
@@ -76,7 +77,7 @@ class IniciarCajaView(APIView):
             
             # Si no existe una caja abierta, creamos una nueva caja
             caja = Caja.objects.create(
-                tienda_id=tienda_id,
+                tienda=tienda_id,
                 fecha_apertura= timezone.make_aware(datetime.now()),
                 usuario_apertura=usuario_apertura,
                 saldo_inicial=saldo_inicial,
@@ -106,14 +107,15 @@ class RealizarGastoView(APIView):
     def post(self, request):
         caja_id = request.data.get("caja_id")
         monto = request.data.get("monto")
+        tienda_id =request.user.tienda
         descripcion = request.data.get("descripcion", "")
-        usuario_id = request.data.get("usuario_id")
+        usuario_id = request.user.id
 
         if not caja_id or not monto or not usuario_id:
             return Response({"message": "Faltan datos requeridos."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            caja = Caja.objects.get(id=caja_id, estado="abierta")
+            caja = Caja.objects.get(id=caja_id, estado="abierta",tienda_id=tienda_id)
         except Caja.DoesNotExist:
             return Response({"message": "No hay caja abierta para esta tienda."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -149,17 +151,17 @@ class RealizarGastoView(APIView):
 class RealizarIngresoView(APIView):
     def post(self, request, *args, **kwargs):
         caja_id = request.data.get("caja_id")
-        usuario_id = request.data.get("usuario_id")
+        usuario_id = request.user.id
         monto = request.data.get("monto")
         descripcion = request.data.get("descripcion", "")
-
+        tienda_id =request.user.tienda
         if not caja_id or not usuario_id or monto is None:
             return Response({
                 "message": "Faltan datos requeridos: 'tienda_id', 'usuario_id' y 'monto' son obligatorios."
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            caja = Caja.objects.get(id=caja_id, estado="abierta")
+            caja = Caja.objects.get(id=caja_id, estado="abierta",tienda_id=tienda_id)
         except Caja.DoesNotExist:
             return Response({
                 "message": "No hay una caja abierta actualmente para esta tienda."
@@ -189,17 +191,18 @@ class RealizarIngresoView(APIView):
 class RegistrarPrestamoView(APIView):
     def post(self, request, *args, **kwargs):
         tienda_id = request.data.get("tienda_id")
-        usuario_id = request.data.get("usuario_id")
+        usuario_id = request.user.id
         monto = request.data.get("monto")
+        caja_id = request.data.get("caja_id")
         descripcion = request.data.get("descripcion", "")
-
+        tienda_id =request.user.tienda
         if not tienda_id or not usuario_id or monto is None:
             return Response({
                 "message": "Faltan datos requeridos: 'tienda_id', 'usuario_id' y 'monto' son obligatorios."
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            caja = Caja.objects.get(tienda_id=tienda_id, estado="abierta")
+            caja = Caja.objects.get(id=caja_id,tienda_id=tienda_id, estado="abierta",)
         except Caja.DoesNotExist:
             return Response({
                 "message": "No hay una caja abierta actualmente para esta tienda."
@@ -234,15 +237,15 @@ class RegistrarPrestamoView(APIView):
 class CerrarCajaView(APIView):
     def post(self, request):
         caja_id = request.data.get("caja_id")
-        usuario_id = request.data.get("usuario_id")  # usuario que está cerrando la caja
-
+        usuario_id = request.user.id  # usuario que está cerrando la caja
+        tienda_id = request.user.tienda
         if not caja_id or not usuario_id:
             return Response({
                 "message": "Faltan datos requeridos: 'tienda_id' y 'usuario_id' son obligatorios."
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            caja = Caja.objects.get(id=caja_id, estado="abierta")
+            caja = Caja.objects.get(id=caja_id, estado="abierta",tienda_id=tienda_id)
         except Caja.DoesNotExist:
             return Response({
                 "message": "No hay una caja abierta actualmente para esta tienda."
@@ -269,9 +272,10 @@ class CerrarCajaView(APIView):
 
 class ReinicializarCajaView(APIView):
     def post(self, request):
-        tienda_id = request.data.get("tienda_id")
+        tienda_id = request.user.tienda
+      
         caja_id = request.data.get("caja_id")
-        usuario_id = request.data.get("usuario_id")
+        usuario_id = request.user.id
         nuevo_saldo = request.data.get("saldo_inicial")
 
         if not caja_id or not usuario_id or nuevo_saldo is None:
@@ -281,7 +285,7 @@ class ReinicializarCajaView(APIView):
 
         try:
             # Cancelar caja actual si está abierta
-            caja_actual = Caja.objects.get(id=caja_id, estado="abierta")
+            caja_actual = Caja.objects.get(id=caja_id, estado="abierta",tienda_id=tienda_id)
             caja_actual.estado = "cancelada"
             caja_actual.fecha_reinicio = timezone.make_aware(datetime.now())
             caja_actual.save()

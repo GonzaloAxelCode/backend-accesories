@@ -15,7 +15,7 @@ from .models import Categoria
 class CreateCategoria(APIView):
     def post(self, request):
         data = request.data
-        tienda = get_object_or_404(Tienda, id=data.get("tienda"))
+        tienda = request.user.tienda
         serializer = CategoriaSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save(tienda=tienda)
@@ -25,7 +25,7 @@ class CreateCategoria(APIView):
 # Obtener todas las categorias
 class GetAllCategorias(APIView):
     def get(self, request):
-        tienda = request.query_params.get('tienda')
+        tienda = request.user.tienda
         categorias = Categoria.objects.filter(tienda=tienda) 
         serializer = CategoriaSerializer(categorias, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)

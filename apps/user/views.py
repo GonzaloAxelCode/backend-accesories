@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
+from apps.tienda.models import Tienda
 from core.permissions import IsSuperUser
 from .models import UserAccount
 from .serializers import CustomTokenObtainPairSerializer, UserAccountSerializer, UserSerializer
@@ -61,7 +62,9 @@ class GetAllUsersAPIView(APIView):
                 'desactivate_account': user.desactivate_account,
                 'permissions': permissions,  # Diccionario de permisos (Meta + bool)
                 'user_permissions_list': user_permissions_filtered,  # Solo permisos de Meta que tiene el usuario
-                "all_permissions_meta":all_permissions_meta
+                "all_permissions_meta":all_permissions_meta,
+                "tienda": user.tienda,
+                                        'tienda_nombre': user.tienda.nombre if user.tienda else None # type: ignore
             }
             users_data.append(user_data)
 
@@ -69,6 +72,7 @@ class GetAllUsersAPIView(APIView):
 
 
 class GetUserAPIView(APIView):
+    permission_classes = [IsSuperUser]
     def get(self, request, id):
         # Obtener el usuario por su ID
         user = get_object_or_404(UserAccount, id=id)
@@ -107,31 +111,93 @@ class GetUserAPIView(APIView):
             'desactivate_account': user.desactivate_account,
             'permissions': permissions_dict,  # Diccionario de permisos (Meta + bool)
             'user_permissions_list': user_permissions_filtered,  # Solo permisos de Meta que tiene el usuario
-            'all_permissions_meta': all_permissions_meta  # Todos los permisos posibles (Meta)
+            'all_permissions_meta': all_permissions_meta,  # Todos los permisos posibles (Meta)
+            'tienda': user.tienda,
+                                    'tienda_nombre': user.tienda.nombre if user.tienda else None # type: ignore
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
     
     
     
+    
+    
+class GetCurrentUserAPIView(APIView):
+    
+    def get(self, request):
+        # Obtener el usuario por su ID
+        user = get_object_or_404(UserAccount, id=request.user.id)
+
+        # 1. Obtener TODOS los permisos definidos en Meta (array de strings)
+        all_permissions_meta = [perm[0] for perm in UserAccount._meta.permissions]
+
+        # 2. Obtener los permisos del usuario actual (solo los que están en Meta)
+        user_permissions_raw = user.get_all_permissions()  # Permisos en formato 'app_label.perm_codename'
+        
+        # Filtrar para quedarnos solo con los permisos definidos en Meta
+        user_permissions_filtered = [
+            perm.split('.')[1]  # Extraemos solo el 'perm_codename' (ej: 'can_make_sale')
+            for perm in user_permissions_raw
+            if perm.split('.')[1] in all_permissions_meta  # Solo si está en Meta
+        ]
+
+        # 3. Construir el diccionario de permisos {permiso: bool}
+        permissions_dict = {
+            perm: perm in user_permissions_filtered 
+            for perm in all_permissions_meta
+        }
+
+        # 4. Construir la respuesta
+        response_data = {
+             # type: ignore
+                        'username': user.username,
+                        'first_name': user.first_name,
+                        'last_name': user.last_name,
+                        'photo_url': user.photo_url,
+                        'date_joined': user.date_joined,
+                        'is_active': user.is_active,
+                        'is_staff': user.is_staff,
+                        'is_superuser': user.is_superuser,
+                        'es_empleado': user.es_empleado,
+                        'desactivate_account': user.desactivate_account,
+                        'permissions': permissions_dict,
+                        'user_permissions_list': user_permissions_filtered,
+                        'all_permissions_meta': all_permissions_meta,
+                        'tienda': user.tienda.id, # type: ignore
+                        'tienda_nombre': user.tienda.nombre if user.tienda else None # type: ignore
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+    
+    
+
 class CreateUserInTiendaAPIView(APIView):
-    def post(self, request):
-        # Verificar si el usuario tiene permiso
+    permission_classes = [IsSuperUser]
+
+    def post(self, request, tienda_id):
+        print(tienda_id)
+        # Verificar si el usuario tiene permiso específico
         if not request.user.has_perm("apps.user.can_create_user"):
             return Response({"error": "No tiene permiso para crear usuarios"}, status=status.HTTP_403_FORBIDDEN)
-        
-        # Clonar los datos enviados y forzar la tienda del usuario logueado
+
+        # Buscar la tienda (si no existe devuelve 404)
+        tienda = get_object_or_404(Tienda, id=tienda_id)
+
+        # Clonar los datos y asignar tienda
         data = request.data.copy()
-        data["tienda"] = request.user.tienda.id  # <- fuerza la tienda propia
+        data["tienda"] = tienda.id   # type: ignore # 👈 Forzamos la tienda que viene en la URL
 
         serializer = UserAccountSerializer(data=data)
         if serializer.is_valid():
             serializer.save()
-            return Response({"message": "Usuario creado exitosamente", "usuario": serializer.data}, status=status.HTTP_201_CREATED)
-        
+            return Response(
+                {"message": "Usuario creado exitosamente", "usuario": serializer.data},
+                status=status.HTTP_201_CREATED,
+            )
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
 class UpdateUserAPIView(APIView):
+    permission_classes = [IsSuperUser]
     def put(self, request, id):
         user = get_object_or_404(UserAccount, id=id)
         serializer = UserAccountSerializer(user, data=request.data, partial=True) 
@@ -144,6 +210,7 @@ class UpdateUserAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class UpdateUserPermissionsView(APIView):
+    permission_classes = [IsSuperUser]
     def put(self, request, user_id):
         try:
             # Obtener el usuario
@@ -184,6 +251,7 @@ class UpdateUserPermissionsView(APIView):
         }, status=status.HTTP_200_OK)
 
 class DeleteUserAPIView(APIView):
+    permission_classes = [IsSuperUser]
     def delete(self, request, id):
         user = get_object_or_404(UserAccount, id=id)
         user.delete()
@@ -192,7 +260,7 @@ class DeleteUserAPIView(APIView):
         }, status=status.HTTP_204_NO_CONTENT)
 
 class UserPermissionsView(APIView):
-
+    permission_classes = [IsSuperUser]
     def get(self, request):
         user = request.user
         all_permissions = dict(
@@ -220,7 +288,7 @@ class UpdatePermissionsAPIView(APIView):
     """
     Vista para que un superusuario asigne o elimine permisos de un usuario.
     """
-
+    permission_classes = [IsSuperUser]
     def patch(self, request, user_id):
         try:
             # Verifica que el usuario sea superusuario

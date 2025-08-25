@@ -13,7 +13,7 @@ import base64
 import requests
 from decimal import Decimal
 import xml.dom.minidom as minidom
-from lxml import etree
+from lxml import etree # pyright: ignore[reportAttributeAccessIssue]
 from bs4 import BeautifulSoup
 
 class GenerarComprobanteView(APIView):

@@ -20,7 +20,7 @@ urlpatterns = [
     path('inventarios/actualizar/<int:id>/', ActualizarInventarioView.as_view(), name='actializar_inventario'),
     path('inventarios/verificar-stock/<int:inventario_id>/', VerificarStock.as_view(), name='verificar_stock'),
     path('inventarios/eliminar/<int:inventario_id>/', EliminarInventario.as_view(), name='eliminar_stock'),
-    path('productos-menor-stock/<int:tienda_id>/', ProductosConMenorStockView.as_view(), name='productos-menor-stock'),
+    path('productos-menor-stock/', ProductosConMenorStockView.as_view(), name='productos-menor-stock'),
     path('buscar-inventario/', BuscarInventarioAPIView.as_view(), name='buscar-inventario'),
 
 ]
