@@ -16,48 +16,90 @@ class ProductoPagination(PageNumberPagination):
     max_page_size = 100
 
 
-# ---------- BUSCAR PRODUCTOS ----------
+
+from django.db.models import Q
+
+from django.db.models import Q
+import re
+
+from django.db.models import Q
+import re
+
+
+
+from django.db.models import Q
+import re
+
 class BuscarProductoAPIView(APIView):
     def post(self, request):
-        query = request.data.get('query', {})
+        data = request.data
+        query = data.get("query", data)  # soporta {query:{}} o plano
 
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
-            return Response({"error": "El usuario no tiene una tienda asignada."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        nombre = query.get('nombre', "")
-        categoria = query.get('categoria', 0)
+        # ----- Parámetros -----
+        nombre = (query.get('nombre') or "").strip().lower()
+        nombre_normalizado = re.sub(r"\s+", " ", nombre).strip()
+
+        sku = (query.get('sku') or "").strip()  # 🚨 nuevo campo SKU
+
+        categoria = query.get('categoria') or 0
+        try:
+            categoria = int(categoria)
+        except (ValueError, TypeError):
+            categoria = 0
+
         activo = query.get('activo', None)
 
-        productos = Producto.objects.filter(tienda=tienda)
+        # ----- Filtros -----
+        filtros = Q(tienda=tienda)
 
-        if nombre:
-            productos = productos.filter(nombre__icontains=nombre)
-        if categoria and categoria != 0:
-            productos = productos.filter(categoria__id=categoria)
+        if sku:  # 🔎 búsqueda exacta por SKU
+            filtros &= Q(sku__iexact=sku)
+
+        if nombre_normalizado:
+            palabras = nombre_normalizado.split(" ")
+            for palabra in palabras:
+                filtros &= Q(nombre__icontains=palabra) | Q(descripcion__icontains=palabra)
+
+        if categoria > 0:
+            filtros &= Q(categoria_id=categoria)
+
         if activo is not None:
-            productos = productos.filter(activo=activo)
+            filtros &= Q(activo=activo)
 
+        # ----- Query -----
+        productos = Producto.objects.filter(filtros).distinct()
         total_productos = productos.count()
 
-        # Paginación
+        if total_productos == 0:
+            return Response({
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "index_page": 1,
+                "length_pages": 0,
+                "results": [],
+                "search_products_found": "products_not_found"
+            })
+
+        # ----- Paginación -----
         paginator = ProductoPagination()
         result_page = paginator.paginate_queryset(productos, request)
 
-        current_page = paginator.page.number - 1
-        total_pages = paginator.page.paginator.num_pages
-        next_page = current_page + 1 if paginator.page.has_next() else None
-        previous_page = current_page - 1 if paginator.page.has_previous() else None
-
         return Response({
             "count": total_productos,
-            "next": next_page,
-            "previous": previous_page,
-            "index_page": current_page,
-            "length_pages": total_pages,
+            "next": paginator.page.next_page_number() if paginator.page.has_next() else None,
+            "previous": paginator.page.previous_page_number() if paginator.page.has_previous() else None,
+            "index_page": paginator.page.number - 1,
+            "length_pages": paginator.page.paginator.num_pages -1,
             "results": ProductoSerializer(result_page, many=True).data,
-            "search_products_found": "products_found" if total_productos > 0 else "products_not_found"
+            "search_products_found": "products_found"
         })
 
 
@@ -70,6 +112,7 @@ class GetAllProductosAPIView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         productos = Producto.objects.filter(tienda=tienda).order_by('id')
+        serializer_all = ProductoSerializer(Producto.objects.filter(tienda=tienda).order_by('id'), many=True)
         total_productos = productos.count()
 
         page_size = int(request.query_params.get('page_size', 5))
@@ -80,6 +123,7 @@ class GetAllProductosAPIView(APIView):
         paginator = ProductoPagination()
         paginated_products = paginator.paginate_queryset(productos, request)
         serializer = ProductoSerializer(paginated_products, many=True)
+        
 
         next_page = page_number + 1 if page_number < total_paginas else None
         previous_page = page_number - 1 if page_number > 1 else None
@@ -90,7 +134,8 @@ class GetAllProductosAPIView(APIView):
             "previous": previous_page,
             "index_page": page_number - 1,
             "length_pages": total_paginas - 1,
-            "results": serializer.data
+            "results": serializer.data,
+            "all_results":serializer_all.data
         })
 
 

@@ -2,7 +2,7 @@ from django.db import models
 
 from apps import tienda
 from apps.tienda.models import Tienda
-
+from django.utils import timezone
 # Create your models here.
 #
 class Proveedor(models.Model):
@@ -16,6 +16,9 @@ class Proveedor(models.Model):
     tipo_producto = models.CharField(max_length=100)
     calificacion = models.IntegerField(default=0)
     tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE,default=1, related_name='proveedores') # type: ignore
-
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     def __str__(self):
         return self.nombre
+    class Meta:
+        ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
+

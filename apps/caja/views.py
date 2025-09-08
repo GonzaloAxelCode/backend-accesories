@@ -272,7 +272,7 @@ class CerrarCajaView(APIView):
 
 class ReinicializarCajaView(APIView):
     def post(self, request):
-        tienda_id = request.user.tienda
+        tienda_id = request.user.tienda.id
       
         caja_id = request.data.get("caja_id")
         usuario_id = request.user.id

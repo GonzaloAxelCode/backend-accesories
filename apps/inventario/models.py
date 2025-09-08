@@ -1,6 +1,7 @@
 
 from django.db import models
 
+from django.utils import timezone
 
 from apps.producto.models import Producto
 from apps.proveedor.models import Proveedor
@@ -15,6 +16,7 @@ class Inventario(models.Model):
     stock_minimo = models.IntegerField()
     stock_maximo = models.IntegerField()
     fecha_actualizacion = models.DateTimeField(auto_now=True)
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     activo = models.BooleanField(default=True)
     lote = models.CharField(max_length=100, blank=True, null=True)
     fecha_vencimiento = models.DateField(null=True, blank=True)
@@ -30,4 +32,6 @@ class Inventario(models.Model):
 
     def __str__(self):
         return f"{self.producto} en {self.tienda}"
+    class Meta:
+        ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
 

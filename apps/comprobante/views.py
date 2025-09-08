@@ -47,7 +47,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 class ConsultaDocumentoView(APIView):
-    API_TOKEN = "410e79ed29432fc2d7f215d7563b3e1f6632d7ab6d3a34742949ce00c2acd1d4"
+    API_TOKEN = "f9b0bf9208c1281d2efc2b4ce2858afab31c4962e87603151f7e138965bb8901"
     BASE_URL_DNI = "https://apiperu.dev/api/dni/"
     BASE_URL_RUC = "https://apiperu.dev/api/ruc/"
 

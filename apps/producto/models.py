@@ -3,6 +3,7 @@ from apps import tienda
 from apps.categoria.models import Categoria
 from apps.proveedor.models import Proveedor
 from apps.tienda.models import Tienda
+from django.utils import timezone
 
 class Producto(models.Model):
     nombre = models.CharField(max_length=200)
@@ -17,7 +18,7 @@ class Producto(models.Model):
     fecha_actualizacion = models.DateTimeField(auto_now=True)
     activo = models.BooleanField(default=True)
     tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE,default=1) # type: ignore
-
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)     
     def save(self, *args, **kwargs):
         if not self.sku and self.categoria:
             siglas = self.categoria.siglas_nombre_categoria.upper()  # type: ignore # Obtiene las siglas
@@ -29,3 +30,6 @@ class Producto(models.Model):
 
     def __str__(self):
         return self.nombre
+    class Meta:
+        ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
+

@@ -1,6 +1,6 @@
 from django.db import models
 from apps.venta.models import Venta
-
+from django.utils import timezone
 class ComprobanteElectronico(models.Model):
     venta = models.OneToOneField(
         Venta, on_delete=models.CASCADE, related_name='comprobante'
@@ -34,14 +34,19 @@ class ComprobanteElectronico(models.Model):
     ticket_url = models.URLField(max_length=500, null=True, blank=True)
     items = models.JSONField(default=list)
 
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     def __str__(self):
         return f"{self.tipo_comprobante} {self.serie}-{self.correlativo}"
+    class Meta:
+        ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
+
 
 
 class NotaCredito(models.Model):
     comprobante_original = models.OneToOneField(
         ComprobanteElectronico, on_delete=models.CASCADE, related_name='nota_credito'
     )
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     serie = models.CharField(max_length=4)  # Ejemplo: NC01
     numero = models.CharField(max_length=8)  # Ejemplo: 00012345
     motivo = models.TextField()
@@ -49,3 +54,6 @@ class NotaCredito(models.Model):
     xml_firmado = models.TextField(blank=True, null=True)
     cdr_respuesta = models.TextField(blank=True, null=True)
     estado_sunat = models.CharField(max_length=50, default='Pendiente')  # Pendiente, Aceptado, Rechazado
+    class Meta:
+        ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
+

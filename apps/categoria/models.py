@@ -1,5 +1,6 @@
-from django.db import models
 
+from django.db import models
+from django.utils import timezone
 from apps.tienda.models import Tienda
 
 # Create your models here.
@@ -15,8 +16,12 @@ class Categoria(models.Model):
     orden = models.IntegerField(default=0)
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True)
     destacado = models.BooleanField(default=False)
-    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE,default=1, related_name='categorias') # type: ignore
+    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE, related_name='categorias',null=True, blank=True) # type: ignore
     color = models.CharField(max_length=50, blank=True)
     siglas_nombre_categoria = models.CharField(max_length=10, blank=True,null=True)
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     def __str__(self):
         return self.nombre
+    class Meta:
+        ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
+

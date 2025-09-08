@@ -79,10 +79,9 @@ class RegistrarVentaView(APIView):
 
             # Buscar la tienda y el usuario por ID
             tienda = request.user.tienda
-            if not request.user.is_superuser:
-                return Response({"error": "No tienes permisos para realizar esta acción."}, status=status.HTTP_403_FORBIDDEN)
+            
 
-            usuario = request.user.id
+            usuario = request.user
             cliente_data = data["cliente"]
             
             fecha_hora_naive = datetime.now()  # Esto es naive
@@ -140,7 +139,13 @@ class RegistrarVentaView(APIView):
                         igv=igv,
                         tipo_afectacion_igv="10",  # Código de afectación IGV estándar
                         total_impuestos=total_impuestos,
-                        precio_unitario=precio_unitario
+                        precio_unitario=precio_unitario, 
+                        
+                        
+                         tipo_documento_cliente = "6" if data["tipoComprobante"] == "Factura" else "1",
+                             numero_documento_cliente=cliente_data["ruc"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
+                             nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"]
+                     
                     )
                     venta_producto.save()
                     inventario.cantidad -= cantidad
@@ -313,10 +318,8 @@ class RegistrarVentaSinComprobanteView(APIView):
                 return Response({"error": "Faltan datos obligatorios"}, status=status.HTTP_400_BAD_REQUEST)
 
             tienda = request.user.tienda
-            if not request.user.is_superuser:
-                return Response({"error": "No tienes permisos para realizar esta acción."}, status=status.HTTP_403_FORBIDDEN)
-
-            usuario =request.user.id
+           
+            usuario =request.user
             cliente_data = data.get("cliente", {})
 
             # Fecha aware
@@ -331,7 +334,10 @@ class RegistrarVentaSinComprobanteView(APIView):
                     tipo_comprobante=data["tipoComprobante"],
                     fecha_hora=fecha_hora_aware,
                     estado="Pendiente",  
-                    
+                    tipo_documento_cliente = "6" if data["tipoComprobante"] == "Factura" else "1",
+                             numero_documento_cliente=cliente_data["ruc"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
+                             nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"]
+                     
                 )
 
                 subtotal = Decimal(0)
@@ -367,6 +373,7 @@ class RegistrarVentaSinComprobanteView(APIView):
                         tipo_afectacion_igv="10",
                         total_impuestos=total_impuestos,
                         precio_unitario=precio_unitario
+                     
                     )
 
                     inventario.cantidad -= cantidad

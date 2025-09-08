@@ -1,7 +1,7 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin, Permission
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-
+from django.utils import timezone
 from apps import tienda
 from apps.tienda.models import Tienda
 
@@ -20,6 +20,18 @@ class UserManager(BaseUserManager):
         user = self.create_user(username, password, **extra_fields)
         user.is_superuser = True
         user.is_staff = True
+        tienda, created = Tienda.objects.get_or_create(
+        id=1,
+        defaults={
+            "nombre": "Tienda de Prueba",
+            "direccion": "Sin direccion",
+            "telefono": "000000000",
+            "ruc": "00000000000",
+            "activo": False,
+        }
+             )
+        user.tienda = tienda
+ 
         user.save(using=self._db)
         return user
 
@@ -39,10 +51,10 @@ class UserAccount(AbstractBaseUser, PermissionsMixin):
     es_empleado = models.BooleanField(default=False)
     desactivate_account = models.BooleanField(default=False)
     tienda = models.ForeignKey(
-       Tienda, on_delete=models.CASCADE, default=1, related_name='users_tienda' # type: ignore
+       Tienda, on_delete=models.CASCADE, null=True, blank=True, related_name='users_tienda' # type: ignore
     )
     objects = UserManager()
-
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     USERNAME_FIELD = "username"
     REQUIRED_FIELDS = ["first_name","last_name"]
 
@@ -75,7 +87,7 @@ class UserAccount(AbstractBaseUser, PermissionsMixin):
             ("can_create_user", "Puede crear nuevos usuarios")
 
         ]
-
+        ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
 
     def __str__(self):
         return self.username

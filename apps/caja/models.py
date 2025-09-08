@@ -16,7 +16,7 @@ class Caja(models.Model):
     tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE, related_name='cajas')
     usuario_apertura = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='cajas_abiertas')
     usuario_cierre = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='cajas_cerradas')
-
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     fecha_apertura = models.DateTimeField(auto_now_add=True)
     fecha_cierre = models.DateTimeField(null=True, blank=True)
     fecha_cancelacion = models.DateTimeField(null=True, blank=True)
@@ -55,6 +55,10 @@ class Caja(models.Model):
     )
     observacion = models.TextField(blank=True, null=True)
 
+    class Meta:
+        ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
+
+
 
 
 class OperacionCaja(models.Model):
@@ -76,7 +80,7 @@ class OperacionCaja(models.Model):
         decimal_places=2,
         validators=[MinValueValidator(0.01)]
     )
-
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     fecha = models.DateTimeField(auto_now_add=True)
     detalles = models.TextField(blank=True, null=True)
     def save(self, *args, **kwargs):
@@ -85,3 +89,6 @@ class OperacionCaja(models.Model):
             next_id = last.id + 1 if last else 1 # type: ignore
             self.id_operacion = f'OP{next_id:06d}'  # ejemplo: OP000001, OP000002, etc.
         super().save(*args, **kwargs) 
+    class Meta:
+        ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
+

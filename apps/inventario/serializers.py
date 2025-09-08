@@ -7,19 +7,20 @@ class InventarioSerializer(serializers.ModelSerializer):
     tienda_nombre = serializers.SerializerMethodField()
     proveedor_nombre = serializers.SerializerMethodField()
     categoria_nombre = serializers.SerializerMethodField()  # Nuevo campo
- 
+    categoria_id = serializers.SerializerMethodField()  # ✅ Agregado
+
 
     class Meta:
         model = Inventario
         fields = [
-            'id', 'producto', 'producto_nombre','categoria_nombre',
+            'id', 'producto', 'producto_nombre','categoria_id','categoria_nombre',
             'tienda', 'tienda_nombre',
             'cantidad', 'stock_minimo', 'stock_maximo',
             'costo_compra', 'costo_venta', 'fecha_actualizacion',
             'activo', 'lote', 'fecha_vencimiento', 'estado',
             'proveedor', 'proveedor_nombre',
             'responsable', 
-            'descripcion'
+            'descripcion','date_created'
         ]
 
     def get_producto_nombre(self, obj):
@@ -33,3 +34,5 @@ class InventarioSerializer(serializers.ModelSerializer):
 
     def get_categoria_nombre(self, obj):
         return obj.producto.categoria.nombre if obj.producto and obj.producto.categoria else "Desconocido"
+    def get_categoria_id(self, obj):
+        return obj.producto.categoria.id if obj.producto and obj.producto.categoria else None

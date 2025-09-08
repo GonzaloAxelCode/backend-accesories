@@ -3,12 +3,16 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import IsAuthenticated
 from math import ceil
+import re
+from django.db.models import Q
 
 from django.contrib.auth import get_user_model
 from apps.inventario.models import Inventario
 from apps.inventario.serializers import InventarioSerializer
 from apps.producto.models import Producto
+from apps.producto.serializers import ProductoSerializer
 from apps.proveedor.models import Proveedor
 
 User = get_user_model()
@@ -23,6 +27,7 @@ class InventarioPagination(PageNumberPagination):
 
 # ---------- CREAR INVENTARIO ----------
 class CrearInventario(APIView):
+    permission_classes=[IsAuthenticated]
     def post(self, request):
         try:
             data = request.data
@@ -32,7 +37,7 @@ class CrearInventario(APIView):
 
             producto = get_object_or_404(Producto, id=data.get("producto"))
             proveedor = get_object_or_404(Proveedor, id=data.get("proveedor"))
-            user = get_object_or_404(User, id=data.get("responsable"))
+            user = request.user
 
             if Inventario.objects.filter(producto=producto, tienda=tienda, proveedor=proveedor).exists():
                 return Response(
@@ -63,33 +68,58 @@ class CrearInventario(APIView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-# ---------- LISTAR INVENTARIO (PAGINADO) ----------
 class GetAllInventarioAPIView(APIView):
     def get(self, request):
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
-            return Response({"error": "El usuario no tiene una tienda asignada."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        inventarios = Inventario.objects.filter(tienda=tienda)
+        qs = Inventario.objects.filter(tienda=tienda)
+        
+        
+        serializer = InventarioSerializer(qs, many=True)    
 
-        total_items = inventarios.count()
-        page_size = int(request.query_params.get('page_size', 5))
-        page_number = int(request.query_params.get('page', 1))
-        total_paginas = ceil(total_items / page_size)
-
-        paginator = InventarioPagination()
-        paginated_data = paginator.paginate_queryset(inventarios, request)
-        serializer = InventarioSerializer(paginated_data, many=True)
-
-        next_page = page_number + 1 if page_number < total_paginas else None
-        previous_page = page_number - 1 if page_number > 1 else None
 
         return Response({
-            "count": total_items,
-            "next": next_page,
-            "previous": previous_page,
-            "index_page": page_number - 1,
-            "length_pages": total_paginas - 1,
+            
+            "results": serializer.data
+        })
+
+class GetAllInventarioAPIViewWithpagination(APIView):
+    def get(self, request):
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        qs = Inventario.objects.filter(tienda=tienda)
+        paginator = InventarioPagination()
+        page = paginator.paginate_queryset(qs, request)
+        serializer = InventarioSerializer(page, many=True)    
+
+
+        pg = paginator.page  # objeto de paginación real de DRF
+
+        # --- respuesta personalizada ---
+        print({
+            "count": pg.paginator.count,
+            "next": pg.next_page_number() if pg.has_next() else None,
+            "previous": pg.previous_page_number() if pg.has_previous() else None,
+           "index_page": pg.number ,  # 👈 base 0 para frontend
+            "length_pages": pg.paginator.num_pages,  # 👈 también base 0
+            "results": serializer.data
+        })
+        return Response({
+            "count": pg.paginator.count,
+            "next": pg.next_page_number()  if pg.has_next()   else None,
+            "previous": pg.previous_page_number() if pg.has_previous() else None,
+           "index_page": pg.number ,  # 👈 base 0 para frontend
+            "length_pages": pg.paginator.num_pages  , # 👈 también base 0
             "results": serializer.data
         })
 
@@ -217,13 +247,12 @@ class ProductosConMenorStockView(APIView):
             .select_related('producto')
             .order_by('cantidad')[:10]
         )
+        
 
         data = [
             {
-                "inventario_id": inv.id, # type: ignore
-                "producto_id": inv.producto.id, # type: ignore
-                "nombre": inv.producto.nombre,
-                "cantidad": inv.cantidad,
+                "inventario": inv.id, # type: ignore
+                "item": ProductoSerializer(inv.producto).data,
             }
             for inv in inventarios
         ]
@@ -232,44 +261,204 @@ class ProductosConMenorStockView(APIView):
 
 
 # ---------- BUSCAR INVENTARIO ----------
-class BuscarInventarioAPIView(APIView):
-    def post(self, request):
-        page_size = int(request.query_params.get('page_size', 5))
-        page_number = int(request.query_params.get('page', 1))
 
-        query = request.data.get('query', {})
-        nombre = query.get('nombre', "")
-        categoria = query.get('categoria', 0)
-        activo = query.get('activo', None)
+class BuscarInventarioAPIViewSinRangos(APIView):
+    def post(self, request):
+        data = request.data
+        query = data.get("query", data)  # soporta {query:{}} o plano
 
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
-            return Response({"error": "El usuario no tiene una tienda asociada."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "El usuario no tiene una tienda asociada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        inventarios = Inventario.objects.select_related('producto').filter(tienda=tienda)
+        # ----- Parámetros -----
+        nombre = (query.get("nombre") or "").strip().lower()
+        nombre_normalizado = re.sub(r"\s+", " ", nombre).strip()
 
-        if nombre:
-            inventarios = inventarios.filter(producto__nombre__icontains=nombre)
-        if categoria and categoria != 0:
-            inventarios = inventarios.filter(producto__categoria__id=categoria)
+        categoria = query.get("categoria") or 0
+        try:
+            categoria = int(categoria)
+        except (ValueError, TypeError):
+            categoria = 0
+
+        activo = query.get("activo", None)
+
+        # ----- Filtros -----
+        filtros = Q(tienda=tienda)
+
+        if nombre_normalizado:
+            palabras = nombre_normalizado.split(" ")
+            for palabra in palabras:
+                filtros &= (
+                    Q(producto__nombre__icontains=palabra) |
+                    Q(producto__descripcion__icontains=palabra)
+                )
+
+        if categoria > 0:
+            filtros &= Q(producto__categoria_id=categoria)
+
         if activo is not None:
-            inventarios = inventarios.filter(activo=activo)
+            filtros &= Q(activo=activo)
 
+        # ----- Query -----
+        inventarios = Inventario.objects.select_related("producto").filter(filtros).distinct()
         total_inventarios = inventarios.count()
 
+        if total_inventarios == 0:
+            return Response({
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "index_page": 1,
+                "length_pages": 0,
+                "results": [],
+                "search_products_found": "products_not_found"
+            })
+
+        # ----- Paginación -----
         paginator = InventarioPagination()
         result_page = paginator.paginate_queryset(inventarios, request)
-        current_page = paginator.page.number - 1
-        total_pages = paginator.page.paginator.num_pages
-        next_page = current_page + 1 if paginator.page.has_next() else None
-        previous_page = current_page - 1 if paginator.page.has_previous() else None
 
         return Response({
             "count": total_inventarios,
-            "next": next_page,
-            "previous": previous_page,
-            "index_page": current_page,
-            "length_pages": total_pages,
+            "next": paginator.page.next_page_number() if paginator.page.has_next() else None,
+            "previous": paginator.page.previous_page_number() if paginator.page.has_previous() else None,
+            "index_page": paginator.page.number - 1,  # página actual
+            "length_pages": paginator.page.paginator.num_pages - 1,
             "results": InventarioSerializer(result_page, many=True).data,
-            "search_products_found": "products_found" if total_inventarios > 0 else "products_not_found"
+            "search_products_found": "products_found"
         }, status=status.HTTP_200_OK)
+        
+# ---------- BUSCAR INVENTARIO ----------
+
+class BuscarInventarioAPIView(APIView):
+    def post(self, request):
+        data = request.data
+        query = data.get("query", data)  # soporta {query:{}} o plano
+
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asociada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ----- Parámetros -----
+        nombre = (query.get("nombre") or "").strip().lower()
+        nombre_normalizado = re.sub(r"\s+", " ", nombre).strip()
+
+        categoria = query.get("categoria") or 0
+        try:
+            categoria = int(categoria)
+        except (ValueError, TypeError):
+            categoria = 0
+
+        activo = query.get("activo", None)
+
+        # --- Filtros de stock ---
+        stock_min = query.get("stock_min", None)
+        stock_max = query.get("stock_max", None)
+
+        # --- Filtros de precio compra ---
+        precio_compra_min = query.get("precio_compra_min", None)
+        precio_compra_max = query.get("precio_compra_max", None)
+
+        # --- Filtros de precio venta ---
+        precio_venta_min = query.get("precio_venta_min", None)
+        precio_venta_max = query.get("precio_venta_max", None)
+
+        # ----- Filtros -----
+        filtros = Q(tienda=tienda)
+
+        if nombre_normalizado:
+            palabras = nombre_normalizado.split(" ")
+            for palabra in palabras:
+                filtros &= (
+                    Q(producto__nombre__icontains=palabra) |
+                    Q(producto__descripcion__icontains=palabra) |
+                    Q(producto__sku__icontains=palabra) |
+                    Q(producto__marca__icontains=palabra) |
+                    Q(producto__modelo__icontains=palabra)
+                    
+                )
+
+        if categoria > 0:
+            filtros &= Q(producto__categoria_id=categoria)
+
+        if activo is not None:
+            filtros &= Q(activo=activo)
+
+        # --- Stock ---
+        if stock_min is not None:
+            try:
+                filtros &= Q(cantidad__gte=int(stock_min))
+            except ValueError:
+                pass
+        if stock_max is not None:
+            try:
+                filtros &= Q(cantidad__lte=int(stock_max))
+            except ValueError:
+                pass
+
+        # --- Precio de compra ---
+        if precio_compra_min is not None:
+            try:
+                filtros &= Q(costo_compra__gte=float(precio_compra_min))
+            except ValueError:
+                pass
+        if precio_compra_max is not None:
+            try:
+                filtros &= Q(costo_compra__lte=float(precio_compra_max))
+            except ValueError:
+                pass
+
+        # --- Precio de venta ---
+        if precio_venta_min is not None:
+            try:
+                filtros &= Q(costo_venta__gte=float(precio_venta_min))
+            except ValueError:
+                pass
+        if precio_venta_max is not None:
+            try:
+                filtros &= Q(costo_venta__lte=float(precio_venta_max))
+            except ValueError:
+                pass
+
+        # ----- Query -----
+        inventarios = (
+            Inventario.objects
+            .select_related("producto")
+            .filter(filtros)
+            .distinct()
+        )
+        total_inventarios = inventarios.count()
+
+        if total_inventarios == 0:
+            return Response({
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "index_page": 1,
+                "length_pages": 0,
+                "results": [],
+                "search_products_found": "products_not_found"
+            })
+
+        # ----- Paginación -----
+        paginator = InventarioPagination()
+        result_page = paginator.paginate_queryset(inventarios, request)
+
+        return Response({
+            "count": total_inventarios,
+            "next": paginator.page.next_page_number() if paginator.page.has_next() else None,
+            "previous": paginator.page.previous_page_number() if paginator.page.has_previous() else None,
+            "index_page": paginator.page.number - 1,  # página actual
+            "length_pages": paginator.page.paginator.num_pages - 1,
+            "results": InventarioSerializer(result_page, many=True).data,
+            "search_products_found": "products_found"
+        }, status=status.HTTP_200_OK)
+
+
