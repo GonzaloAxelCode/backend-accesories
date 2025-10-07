@@ -1,4 +1,17 @@
+from collections import Counter
 from datetime import timedelta
+from django.utils.dateparse import parse_date
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.shortcuts import get_object_or_404
+from django.db import transaction
+from decimal import Decimal
+from django.utils import timezone
+import requests
+import json
+from datetime import datetime
+
 
 from decimal import Decimal
 from datetime import datetime, timedelta
@@ -20,24 +33,27 @@ from django.utils.timezone import now
 from django.db.models import Sum
 from apps.comprobante.models import ComprobanteElectronico
 from apps.inventario.models import Inventario
+from apps.producto.serializers import ProductoSerializer
 from apps.venta.serialzers import VentaSerializer
 from .models import Venta, VentaProducto, Tienda, Producto
-SUNAT_PHP = "https://api-sunat-basic.onrender.com"
-SUNAT_PHP_ =  "http://localhost:8080"
+from apps.venta.utils import normalize_date
+SUNAT_PHP_ = "https://api-sunat-basic.onrender.com"
+SUNAT_PHP =  "http://localhost:8080"
 from django.contrib.auth import get_user_model
 User = get_user_model()
 from django.db.models import Max
 from datetime import date, timedelta
 from django.utils import timezone
 from django.utils.timezone import localtime, make_aware
+from django.db.models.functions import Coalesce
 
 class VentaPagination(PageNumberPagination):
     page_size = 5  # Número predeterminado de ventas por página
-    page_size_query_param = 'page_size'  # El cliente puede cambiar el tamaño con ?page_size=
-    max_page_size = 100  # Tamaño máximo permitido por página
+    page_size_query_param = 'page_size'  
+    max_page_size = 100  
     
     
-class RegistrarVentaView(APIView):
+class RegistrarVentaView(APIView):  
     def post(self, request):
         try:
             data = request.data
@@ -98,7 +114,12 @@ class RegistrarVentaView(APIView):
                     tienda=tienda,
                     metodo_pago=data["metodoPago"],
                     tipo_comprobante=data["tipoComprobante"],
-                    fecha_hora=fecha_hora_aware
+                    fecha_hora=fecha_hora_aware,
+                    
+                         tipo_documento_cliente = "6" if data["tipoComprobante"] == "Factura" else "1",
+                             numero_documento_cliente=cliente_data["ruc"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
+                             nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"]
+                     
                 )
                 subtotal = Decimal(0)
                 gravado_total = Decimal(0)
@@ -142,10 +163,6 @@ class RegistrarVentaView(APIView):
                         precio_unitario=precio_unitario, 
                         
                         
-                         tipo_documento_cliente = "6" if data["tipoComprobante"] == "Factura" else "1",
-                             numero_documento_cliente=cliente_data["ruc"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
-                             nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"]
-                     
                     )
                     venta_producto.save()
                     inventario.cantidad -= cantidad
@@ -297,11 +314,12 @@ class RegistrarVentaView(APIView):
                     
                     return Response(venta_json, status=status.HTTP_201_CREATED)
                 else:
-                    return Response({"error": "Error al generar el comprobante", "detalle": response.text}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({"error": "Error al generar el comprobante", "detalle": response}, status=status.HTTP_400_BAD_REQUEST)
             
 
         
         except Exception as e:
+            
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -430,88 +448,6 @@ class RegistrarVentaSinComprobanteView(APIView):
 
 
 
-
-
-
-class VentasPorTiendaView__(APIView):
-    def get(self, request):
-        
-        # Obtener la tienda o devolver 404 si no existe
-        tienda = request.user.tienda
-        # Obtener todas las ventas de la tienda
-        ventas = Venta.objects.filter(tienda=tienda)
-
-        # Serializar los datos
-        ventas_json = []
-        for venta in ventas:
-            
-            comprobante_venta = ComprobanteElectronico.objects.filter(venta=venta).first()
-            
-            comprobante_json = None
-            productos = VentaProducto.objects.filter(venta=venta)
-            if comprobante_venta:
-                comprobante_json = {
-                "tipo_comprobante": comprobante_venta.tipo_comprobante if comprobante_venta else None,
-                "serie": comprobante_venta.serie if comprobante_venta else None,
-                "correlativo": comprobante_venta.correlativo if comprobante_venta else None,
-                "moneda": comprobante_venta.moneda if comprobante_venta else None,
-                "gravadas": float(comprobante_venta.gravadas) if comprobante_venta and comprobante_venta.gravadas else None,
-                "igv": float(comprobante_venta.igv) if comprobante_venta and comprobante_venta.igv else None,
-                "valorVenta": float(comprobante_venta.valorVenta) if comprobante_venta and comprobante_venta.valorVenta else None,
-                "sub_total": float(comprobante_venta.sub_total) if comprobante_venta and comprobante_venta.sub_total else None,
-                "total": float(comprobante_venta.total) if comprobante_venta and comprobante_venta.total else None,
-                "leyenda": comprobante_venta.leyenda if comprobante_venta else None,
-                "tipo_documento_cliente": comprobante_venta.tipo_documento_cliente if comprobante_venta else None,
-                "numero_documento_cliente": comprobante_venta.numero_documento_cliente if comprobante_venta else None,
-                "nombre_cliente": comprobante_venta.nombre_cliente if comprobante_venta else None,
-                "estado_sunat": comprobante_venta.estado_sunat if comprobante_venta else None,
-                "xml_url": comprobante_venta.xml_url if comprobante_venta else None,
-                "pdf_url": comprobante_venta.pdf_url if comprobante_venta else None,
-                "cdr_url": comprobante_venta.cdr_url if comprobante_venta else None,
-                "ticket_url": comprobante_venta.ticket_url if comprobante_venta else None,
-                "items": comprobante_venta.items if comprobante_venta else None
-            }
-
-            productos_json = [
-                {
-                    "id": producto.id,  # ID del registro en VentaProducto # type: ignore
-                    "producto": producto.producto.id if producto.producto else None,  # ID del producto (puede ser nulo) # type: ignore
-                    "producto_nombre": producto.producto.nombre if producto.producto else "Producto eliminado",  # Nombre del producto
-                    "cantidad": producto.cantidad,
-                    "valor_unitario": float(producto.valor_unitario),  # Convertir Decimal a float
-                    "valor_venta": float(producto.valor_venta),
-                    "base_igv": float(producto.base_igv),
-                    "porcentaje_igv": float(producto.porcentaje_igv),
-                    "igv": float(producto.igv),
-                    "tipo_afectacion_igv": producto.tipo_afectacion_igv,
-                    "total_impuestos": float(producto.total_impuestos),
-                    "precio_unitario": float(producto.precio_unitario)
-                }
-                for producto in productos
-            ]
-
-
-            ventas_json.append({
-                "id": venta.id,   # type: ignore
-                "usuario": venta.usuario.id if venta.usuario else None,  # Solo enviamos el ID del usuario
-                "tienda": venta.tienda.id,  # Solo enviamos el ID de la tienda # type: ignore
-                "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
-                "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
-                "fecha_cancelacion": venta.fecha_cancelacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_cancelacion else None,
-                "metodo_pago": venta.metodo_pago,
-                "estado": venta.estado,
-                "activo": venta.activo,
-                "tipo_comprobante": venta.tipo_comprobante,
-                "productos": productos_json,
-                "total":venta.total,
-                "productos_json" :json.dumps(venta.productos_json, indent=4),
-                "comprobante": comprobante_json,  "subtotal": float(venta.subtotal),
-                "gravado_total": float(venta.gravado_total),
-                "igv_total": float(venta.igv_total),
-                "sub_total": float(venta.subtotal),
-            })
-        
-        return Response(ventas_json, status=status.HTTP_200_OK)
 
 
 class CancelarVentaView(APIView):
@@ -646,47 +582,44 @@ class VentaSalesByDateView(APIView):
 
 class ProductosMasVendidosView(APIView):
     def post(self, request):
-        from_date = request.data.get('from_date')  # [2025, 0, 1]
-        to_date = request.data.get('to_date')      # [2025, 3, 1]
-        tienda_id = request.user.tienda
+        fd = request.data.get('from_date')
+        td = request.data.get('to_date')
+        tienda = request.user.tienda
 
-        if not from_date or not to_date or not tienda_id:
-            return Response({"error": "Se requieren 'from_date', 'to_date' y 'tienda_id'"}, status=status.HTTP_400_BAD_REQUEST)
+        # Normalizar fechas
+        fd = normalize_date(fd, end_of_day=False)
+        td = normalize_date(td, end_of_day=True)
 
-        try:
-            from_date_obj = datetime(from_date[0], from_date[1] + 1, from_date[2])
-            to_date_obj = datetime(to_date[0], to_date[1] + 1, to_date[2], 23, 59, 59)
-        except Exception as e:
-            return Response({"error": "Formato de fecha inválido"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Filtramos las ventas por tienda y fecha
-        ventas_filtradas = Venta.objects.filter(
-            tienda_id=tienda_id,
-            fecha_hora__range=(from_date_obj, to_date_obj)
-        ).values_list('id', flat=True)
-
-        # Buscamos los productos vendidos en esas ventas
-        productos_mas_vendidos = (
-            VentaProducto.objects
-            .filter(venta_id__in=ventas_filtradas)
-            .values('producto', 'producto__nombre')
-            .annotate(total_vendido=Sum('cantidad'))
-            .order_by('-total_vendido')[:5]
+        # 1️⃣ Filtramos ventas
+        ventas = Venta.objects.filter(
+            tienda=tienda,
+          
+            activo=True
         )
 
-        data = [
-            {
-                'producto_id': item['producto'],
-                'nombre': item['producto__nombre'],
-                'cantidad_total_vendida': item['total_vendido']
-            }
-            for item in productos_mas_vendidos
-        ]
+        # 2️⃣ Productos de esas ventas
+        venta_productos = VentaProducto.objects.filter(venta__in=ventas)
 
-        return Response({"topProductoMostSales":data}, status=status.HTTP_200_OK)
+        # 3️⃣ Agrupar por producto
+        productos_data = []
+        contador = Counter()
 
- 
+        for vp in venta_productos:
+            if vp.producto:  # evitar productos nulos
+                contador[vp.producto.nombre] += vp.cantidad
 
+        # 4️⃣ Armar respuesta
+        for nombre, cantidad in contador.items():
+            productos_data.append({
+                "nombre": nombre,
+                "cantidad_total_vendida": cantidad
+            })
+
+        # Ordenamos por más vendidos primero
+        productos_data = sorted(productos_data, key=lambda x: x["cantidad_total_vendida"], reverse=True)
+
+        return Response({"results": productos_data})
+    
 class VentasPerDayOrMonth(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -865,7 +798,26 @@ class VentaBusquedaView(APIView):
                     }
                     for producto in productos
                 ]
-
+                nota_credito = getattr(venta, "nota_credito", None)
+                nota_credito_json = None
+                if nota_credito:
+                    nota_credito_json = {
+                        "id": nota_credito.id,
+                        "serie": nota_credito.serie,
+                        "correlativo": nota_credito.correlativo,
+                        "tipo_comprobante_modifica": nota_credito.tipo_comprobante_modifica,
+                        "serie_modifica": nota_credito.serie_modifica,
+                        "correlativo_modifica": nota_credito.correlativo_modifica,
+                        "tipo_motivo": nota_credito.tipo_motivo,
+                        "motivo": nota_credito.motivo,
+                        "moneda": nota_credito.moneda,
+                        "total": float(nota_credito.total),
+                        "estado_sunat": nota_credito.estado_sunat,
+                        "xml_url": nota_credito.xml_url,
+                        "pdf_url": nota_credito.pdf_url,
+                        "cdr_url": nota_credito.cdr_url,
+                        "fecha_emision": nota_credito.fecha_emision.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
                 ventas_json.append({
                     "id": venta.id,
                     "usuario": venta.usuario.id if venta.usuario else None,
@@ -880,7 +832,8 @@ class VentaBusquedaView(APIView):
                     "productos": productos_json,
                     "total": venta.total,
                     "productos_json": json.dumps(venta.productos_json, indent=4),
-                    "comprobante": comprobante_json
+                    "comprobante": comprobante_json,
+                    "comprobante_nota_credito":nota_credito_json
                 })
    
             
@@ -898,7 +851,6 @@ class VentaBusquedaView(APIView):
             })
         
 
-    
     
 class VentasPorTiendaView(APIView):
     def get(self, request):
@@ -972,7 +924,26 @@ class VentasPorTiendaView(APIView):
                     }
                     for producto in productos
                 ]
-
+                nota_credito = getattr(venta, "nota_credito", None)
+                nota_credito_json = None
+                if nota_credito:
+                    nota_credito_json = {
+                        "id": nota_credito.id,
+                        "serie": nota_credito.serie,
+                        "correlativo": nota_credito.correlativo,
+                        "tipo_comprobante_modifica": nota_credito.tipo_comprobante_modifica,
+                        "serie_modifica": nota_credito.serie_modifica,
+                        "correlativo_modifica": nota_credito.correlativo_modifica,
+                        "tipo_motivo": nota_credito.tipo_motivo,
+                        "motivo": nota_credito.motivo,
+                        "moneda": nota_credito.moneda,
+                        "total": float(nota_credito.total),
+                        "estado_sunat": nota_credito.estado_sunat,
+                        "xml_url": nota_credito.xml_url,
+                        "pdf_url": nota_credito.pdf_url,
+                        "cdr_url": nota_credito.cdr_url,
+                        "fecha_emision": nota_credito.fecha_emision.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
                 ventas_json.append({
                     "id": venta.id,
                     "usuario": venta.usuario.id if venta.usuario else None,
@@ -990,7 +961,8 @@ class VentasPorTiendaView(APIView):
                     "gravado_total": float(venta.gravado_total),
                     "igv_total": float(venta.igv_total),
                     "productos_json": json.dumps(venta.productos_json, indent=4),
-                    "comprobante": comprobante_json
+                    "comprobante": comprobante_json,
+                                        "comprobante_nota_credito":nota_credito_json
                 })
 
 
@@ -1011,4 +983,18 @@ class VentasPorTiendaView(APIView):
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

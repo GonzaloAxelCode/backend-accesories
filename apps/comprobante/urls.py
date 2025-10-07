@@ -1,4 +1,4 @@
-from apps.comprobante.views import ConsultaDNIView, ConsultaDocumentoView, ConsultaRUCView, GenerarComprobanteView, ListarComprobantesView
+from apps.comprobante.views import ConsultaDNIView, ConsultaDocumentoView, ConsultaRUCView, GenerarComprobanteView, ListarComprobantesView, RegistrarNotaCreditoView
 from django.urls import path
 
 urlpatterns = [
@@ -7,5 +7,6 @@ urlpatterns = [
     path('consulta-dni/<str:dni>/', ConsultaDNIView.as_view(), name='consulta-dni'),
     path('consulta-ruc/<str:ruc>/', ConsultaRUCView.as_view(), name='consulta-ruc'),
     path('consulta-documento/', ConsultaDocumentoView.as_view(), name='consulta-docs'),
+    path('nota-credito/registrar/', RegistrarNotaCreditoView.as_view(), name='consulta-docs'),
 
 ]

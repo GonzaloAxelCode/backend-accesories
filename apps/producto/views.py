@@ -104,7 +104,7 @@ class BuscarProductoAPIView(APIView):
 
 
 # ---------- LISTAR TODOS LOS PRODUCTOS ----------
-class GetAllProductosAPIView(APIView):
+class GetAllProductosAPIViewWithpagination(APIView):
     def get(self, request):
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
@@ -136,6 +136,22 @@ class GetAllProductosAPIView(APIView):
             "length_pages": total_paginas - 1,
             "results": serializer.data,
             "all_results":serializer_all.data
+        })
+
+class GetAllProductosAPIView(APIView):
+    def get(self, request):
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response({"error": "El usuario no tiene una tienda asignada."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        
+        serializer_all = ProductoSerializer(Producto.objects.filter(tienda=tienda), many=True)
+       
+
+        return Response({
+           
+            "results":serializer_all.data
         })
 
 

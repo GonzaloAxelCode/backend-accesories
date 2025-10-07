@@ -251,7 +251,8 @@ class ProductosConMenorStockView(APIView):
 
         data = [
             {
-                "inventario": inv.id, # type: ignore
+                "inventario":InventarioSerializer(inv).data,
+                
                 "item": ProductoSerializer(inv.producto).data,
             }
             for inv in inventarios
