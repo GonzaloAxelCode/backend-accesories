@@ -28,8 +28,7 @@ from django.utils import timezone
 import requests
 import json
 from datetime import datetime
-SUNAT_PHP_ = "https://api-sunat-basic.onrender.com"
-SUNAT_PHP =  "http://localhost:8080"
+SUNAT_PHP =  "http://174.138.55.7"
 class GenerarComprobanteView(APIView):
     def post(self, request, venta_id):
         venta = get_object_or_404(Venta, id=venta_id)
@@ -159,7 +158,7 @@ class RegistrarNotaCreditoView(APIView):
             }
             print(comprobante_data)
             # 🔹 Enviar a backend PHP
-            php_backend_url = f"{SUNAT_PHP}/examples/api/nota-credito-post.php"
+            php_backend_url = f"{SUNAT_PHP}/src/api/nota-credito-post.php"
             headers = {"Content-Type": "application/json"}
             response = requests.post(php_backend_url, json=comprobante_data, headers=headers)
 

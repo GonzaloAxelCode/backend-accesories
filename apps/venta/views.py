@@ -37,8 +37,8 @@ from apps.producto.serializers import ProductoSerializer
 from apps.venta.serialzers import VentaSerializer
 from .models import Venta, VentaProducto, Tienda, Producto
 from apps.venta.utils import normalize_date
-SUNAT_PHP_ = "https://api-sunat-basic.onrender.com"
-SUNAT_PHP =  "http://localhost:8080"
+
+SUNAT_PHP =  "http://174.138.55.7:8000"
 from django.contrib.auth import get_user_model
 User = get_user_model()
 from django.db.models import Max
@@ -187,7 +187,7 @@ class RegistrarVentaView(APIView):
                     productos_items_for_sunat.append({
                               "codigo": producto.sku,
                             "unidad": "NIU",
-                            "descripcion": producto.descripcion,
+                            "descripcion": producto.nombre,
                             "cantidad": cantidad,
                             "valorUnitario": round(float(valor_unitario), 2),
                             "valorVenta": round(float(valor_venta), 2),
@@ -234,12 +234,18 @@ class RegistrarVentaView(APIView):
 
                 # 🔹 **Enviar la solicitud a la API PHP**
                 print(productos_items_for_sunat)
-                php_backend_url_boleta = SUNAT_PHP + "/examples/api/boleta-post.php"
-                php_backend_url_factura = SUNAT_PHP + "/examples/api/factura-post.php"
+                php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php"
+                php_backend_url_factura = SUNAT_PHP + "/src/api/factura-post.php"
                 
                 
                 headers = {"Content-Type": "application/json"}
                 response = requests.post(php_backend_url_factura if data["tipoComprobante"] == "Factura" else php_backend_url_boleta , json=comprobante_data, headers=headers)           
+                
+                try:
+                     response.json()
+                except Exception:
+                    raise Exception(f"La API PHP devolvió una respuesta no JSON: {response.text}")
+
                 # 🔹 **Verificar respuesta**
                 if response.status_code == 200:
                     response_json = response.json()
