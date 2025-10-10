@@ -25,7 +25,8 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:4200',  # Asegúrate de que esté correctamente especificado
 ]
 
-ALLOWED_HOSTS = ['*']  # Esto permite cualquier host durante el desarrollo
+
+ALLOWED_HOSTS = ['174.138.55.7', 'localhost', '127.0.0.1']
 
 
 
