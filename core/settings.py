@@ -20,7 +20,7 @@ SECRET_KEY = env('SECRET_KEY', default='django-insecure-b_(uj)meht&*#4#223px8w@t
 DEBUG = env.bool('DEBUG', default=False) # type: ignore
 
 # Allowed Hosts
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1']) # type: ignore
+ALLOWED_HOSTS = ["174.138.55.7","localhost","127.0.0.1"]
 
 # Configuración de CORS
 if DEBUG:
