@@ -1,44 +1,36 @@
 from datetime import timedelta
 from pathlib import Path
-import environ
+import environ # type: ignore
+
 import os
 
-env = environ.Env(
-    # Valores por defecto
-    DEBUG=(bool, False)
-)
+
+env = environ.Env()
+environ.Env.read_env()
+ENVIRONMENT = env
+
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Leer archivo .env
-environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = env('SECRET_KEY', default='django-insecure-b_(uj)meht&*#4#223px8w@t=l6emfbdtw2jcw+ei39d!j&5c%') # type: ignore
+SECRET_KEY = 'django-insecure-b_(uj)meht&*#4#223px8w@t=l6emfbdtw2jcw+ei39d!j&5c%'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env.bool('DEBUG', default=False) # type: ignore
-
-# Allowed Hosts
-ALLOWED_HOSTS = ["174.138.55.7","localhost","127.0.0.1"]
-
+DEBUG = True
 # Configuración de CORS
-if DEBUG:
-    # En desarrollo: permitir todo
-    CORS_ORIGIN_ALLOW_ALL = True
-    CORS_ALLOW_ALL_ORIGINS = True
-    CSRF_TRUSTED_ORIGINS = [
-        'http://localhost:4200',
-        'http://localhost:3000',
-    ]
-else:
-    # En producción: solo orígenes específicos
-    CORS_ORIGIN_ALLOW_ALL = False
-    CORS_ALLOW_ALL_ORIGINS = False
-    CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[]) # type: ignore
-    CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[]) # type: ignore
+CORS_ORIGIN_ALLOW_ALL = True  # Permitir cualquier origen
+CORS_ALLOW_ALL_ORIGINS = True  # Esta línea puede ser redundante
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:4200',  # Asegúrate de que esté correctamente especificado
+]
+
+ALLOWED_HOSTS = ['*']  # Esto permite cualquier host durante el desarrollo
+
+
 
 # Application definition
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -46,34 +38,37 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    "rest_framework_simplejwt.token_blacklist",
+        "rest_framework_simplejwt.token_blacklist",
+
     "corsheaders",
     "rest_framework",
     "djoser",
-    "apps.user",
-    "apps.categoria",
-    "apps.inventario",
-    "apps.cliente",
-    "apps.producto",
-    "apps.proveedor",
-    "apps.tienda",
-    "apps.venta",
-    "apps.external",
-    "apps.comprobante",
-    "apps.caja",
-    "apps.compras",
+                    "apps.user",
+                    "apps.categoria",
+                    "apps.inventario",
+                    "apps.cliente",
+                    "apps.producto",
+                    "apps.proveedor",
+                    "apps.tienda",
+                    "apps.venta",
+                    "apps.external",
+                    "apps.comprobante",
+                    "apps.caja",
+                    "apps.compras",
     "ckeditor",
     "ckeditor_uploader",
     'django.contrib.sites',
     'allauth',
     'allauth.account',
     "rest_framework.authtoken",
+     
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
+   'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -102,13 +97,20 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
+
 # Database
+
+
+# Databases
 DATABASES = {
     "default": env.db("DATABASE_URL", default="postgres:///ninerogues"), # type: ignore
 }
 DATABASES["default"]["ATOMIC_REQUESTS"] = True
 
+
 # Password validation
+
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -124,7 +126,7 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-# REST Framework
+
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
@@ -137,19 +139,18 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
 }
 
+
+
 AUTHENTICATION_BACKENDS = (
     'django.contrib.auth.backends.ModelBackend',
     'allauth.account.auth_backends.AuthenticationBackend',
 )
 
-# Domain configuration
-DOMAIN = env('DOMAIN', default='localhost:8000') # type: ignore
-SITE_DOMAIN = env('SITE_DOMAIN', default='localhost:8000') # type: ignore
 
-# Djoser
+
 DJOSER = {
-    'DOMAIN': DOMAIN,
-    'SITE_NAME': 'SAMU ILO',
+
+    'DOMAIN': 'https://samubackend.onrender.com',
     'LOGIN_FIELD': 'email',
     'USER_CREATE_PASSWORD_RETYPE': True,
     'USERNAME_CHANGED_EMAIL_CONFIRMATION': True,
@@ -169,13 +170,14 @@ DJOSER = {
         'current_user': 'apps.user.serializers.UserAcountCreateSerializer',
         'user_delete': 'djoser.serializers.UserDeleteSerializer',
         "token_create": "apps.user.serializers.CustomTokenObtainPairSerializer",
+
     },
 }
 
-# Simple JWT
+
 SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("JWT",),
-    "BLACKLIST_AFTER_ROTATION": True,
+     "BLACKLIST_AFTER_ROTATION": True,
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=10080),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=15),
     "ROTATE_REFRESH_TOKEN": True,
@@ -185,37 +187,47 @@ SIMPLE_JWT = {
 }
 
 # Internationalization
+
 TIME_ZONE = 'America/Lima'
-USE_TZ = True
+USE_TZ = True  # Asegúrate de que esto esté en True
+
 LANGUAGE_CODE = 'es'
+
+
+
 USE_I18N = True
 
-# Static files
-STATIC_URL = '/static/'
+
+
+
+# Static files (CSS, JavaScript, Images)
+
+
+STATIC_URL = 'static/'
+
+# Default primary key field type
+
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# Static files (CSS, JavaScript, Images) (Por ahora no)
+
+STATIC_URL = '/statics/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'statics')
 ]
 
-# Whitenoise configuration for static files
-if not DEBUG:
-    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+SITE_DOMAIN = os.environ.get("SITE_DOMAIN")
+DOMAIN = os.environ.get('DOMAIN')
+SITE_NAME = ('SAMU ILO')
 
-# Media files
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-MEDIA_URL = '/media/'
-
-# CKEditor
-CKEDITOR_UPLOAD_PATH = "uploads/ckeditor/"
-
-# Site configuration
 SITE_ID = 1
 AUTH_USER_MODEL = "user.UserAccount"
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# Security settings for production
-if not DEBUG:
-  
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    X_FRAME_OPTIONS = 'DENY'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+# URL para acceder a los archivos cargados
+MEDIA_URL = '/media/'
+# Configuración para django-ckeditor
+CKEDITOR_UPLOAD_PATH = "uploads/ckeditor/"
