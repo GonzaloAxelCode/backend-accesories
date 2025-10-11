@@ -38,7 +38,7 @@ from apps.venta.serialzers import VentaSerializer
 from .models import Venta, VentaProducto, Tienda, Producto
 from apps.venta.utils import normalize_date
 
-SUNAT_PHP =  "http://174.138.55.7:8000"
+SUNAT_PHP =  "https://inventarioaxel.wuaze.com/api-sunat-basic"
 from django.contrib.auth import get_user_model
 User = get_user_model()
 from django.db.models import Max

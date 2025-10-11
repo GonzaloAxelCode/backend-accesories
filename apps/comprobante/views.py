@@ -28,7 +28,7 @@ from django.utils import timezone
 import requests
 import json
 from datetime import datetime
-SUNAT_PHP =  "http://174.138.55.7"
+SUNAT_PHP =  "https://inventarioaxel.wuaze.com/api-sunat-basic"
 class GenerarComprobanteView(APIView):
     def post(self, request, venta_id):
         venta = get_object_or_404(Venta, id=venta_id)
