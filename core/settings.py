@@ -19,7 +19,7 @@ SECRET_KEY = 'django-insecure-b_(uj)meht&*#4#223px8w@t=l6emfbdtw2jcw+ei39d!j&5c%
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 # Configuración de CORS
-ALLOWED_HOSTS = ['174.138.55.7', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['174.138.55.7', 'localhost', '127.0.0.1','https://inventarioaxel.duckdns.org','inventarioaxel.duckdns.org']
 
 
 CORS_ORIGIN_ALLOW_ALL = True  # Permitir cualquier origen en desarrollo
