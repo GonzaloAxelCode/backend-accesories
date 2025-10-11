@@ -19,14 +19,19 @@ SECRET_KEY = 'django-insecure-b_(uj)meht&*#4#223px8w@t=l6emfbdtw2jcw+ei39d!j&5c%
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 # Configuración de CORS
-CORS_ORIGIN_ALLOW_ALL = True  # Permitir cualquier origen
-CORS_ALLOW_ALL_ORIGINS = True  # Esta línea puede ser redundante
-CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:4200',  # Asegúrate de que esté correctamente especificado
-]
-
-
 ALLOWED_HOSTS = ['174.138.55.7', 'localhost', '127.0.0.1']
+
+
+CORS_ORIGIN_ALLOW_ALL = True  # Permitir cualquier origen en desarrollo
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True  # Importante para cookies/autenticación
+
+# CSRF Trusted Origins - AGREGAR TU VERCEL AQUÍ
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:4200',
+    'http://127.0.0.1:4200',
+    'https://inventario-electronic-w7mn.vercel.app',  # ← Tu frontend en Vercel
+]
 
 
 
