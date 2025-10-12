@@ -35,10 +35,11 @@ from apps.comprobante.models import ComprobanteElectronico
 from apps.inventario.models import Inventario
 from apps.producto.serializers import ProductoSerializer
 from apps.venta.serialzers import VentaSerializer
+from core.settings import SUNAT_PHP
 from .models import Venta, VentaProducto, Tienda, Producto
 from apps.venta.utils import normalize_date
 
-SUNAT_PHP =  "https://api-sunat-basic.onrender.com"
+
 from django.contrib.auth import get_user_model
 User = get_user_model()
 from django.db.models import Max
