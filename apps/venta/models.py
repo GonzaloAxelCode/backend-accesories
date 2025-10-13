@@ -27,7 +27,10 @@ class Venta(models.Model):
        # Datos del cliente
     tipo_documento_cliente = models.CharField(max_length=2, null=True)  # Ejemplo: 1 (DNI)
     numero_documento_cliente = models.CharField(max_length=15, null=True)
-    nombre_cliente = models.CharField(max_length=255, null=True)   
+    nombre_cliente = models.CharField(max_length=255, null=True)  
+    email_cliente = models.EmailField(max_length=255, null=True)
+    telefono_cliente = models.EmailField(max_length=255, null=True)
+    direccion_cliente = models.EmailField(max_length=255, null=True)
     date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     class Meta:
         ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)

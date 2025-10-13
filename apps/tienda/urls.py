@@ -7,4 +7,5 @@ urlpatterns = [
     path('tiendas/<int:id>/', GetTienda.as_view(), name='get_tienda'),
     path('tiendas/update/<int:id>/', UpdateTienda.as_view(), name='update_tienda'),
     path('tiendas/desactivate/<int:id>/', DeactivateTienda.as_view(), name='deactivate_tienda'),
+    
 ]

@@ -62,9 +62,9 @@ from rest_framework.response import Response
 from rest_framework import status
 
 class ConsultaDocumentoView(APIView):
-    API_TOKEN = "f9b0bf9208c1281d2efc2b4ce2858afab31c4962e87603151f7e138965bb8901"
-    BASE_URL_DNI = "https://apiperu.dev/api/dni/"
-    BASE_URL_RUC = "https://apiperu.dev/api/ruc/"
+    API_TOKEN = "7575|WSDJNfDbCzRGohY4KRLEtyjPyjXX0Zm2XXlVR1Sz"
+    BASE_URL_DNI = "https://apis.aqpfact.pe/api/dni/"
+    BASE_URL_RUC = "https://apis.aqpfact.pe/api/ruc/"
 
     def post(self, request, *args, **kwargs):
         tipo = request.data.get("tipo")  # "dni" o "ruc"
@@ -83,14 +83,83 @@ class ConsultaDocumentoView(APIView):
         headers = {"Authorization": f"Bearer {self.API_TOKEN}"}
         response = requests.get(url, headers=headers)
 
-        if response.status_code == 200:
-            return Response(response.json(), status=status.HTTP_200_OK)
+        try:
+            resp_json = response.json()
+        except Exception:
+            return Response({"error": "La API no devolvió un JSON válido"}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if resp_json.get("success"):
+            data_api = resp_json.get("data", {})
+
+            if tipo == "dni":
+                data = {
+                    "numero": data_api.get("numero"),
+                    "nombre_completo": data_api.get("nombre_completo"),
+                    "nombres": data_api.get("nombres"),
+                    "apellido_paterno": data_api.get("apellido_paterno"),
+                    "apellido_materno": data_api.get("apellido_materno"),
+                }
+            else:  # ruc
+                data = {
+                    "numero": data_api.get("ruc"),
+                    "nombre_o_razon_social": data_api.get("nombre_o_razon_social"),
+                    "nombre_comercial": data_api.get("trade_name") or data_api.get("nombre_comercial", ""),
+                    "estado": data_api.get("estado"),
+                    "condicion": data_api.get("condicion")
+                }
+
+            return Response(data, status=status.HTTP_200_OK)
         else:
             return Response({"error": "No se encontró el documento"}, status=status.HTTP_404_NOT_FOUND)
 
+    """
 
+{
+    "success": true,
+    "data": {
+        "numero": "76881855",
+        "nombre_completo": "VALDEZ QUISPE, GONZALO AXEL",
+        "name": "VALDEZ QUISPE, GONZALO AXEL",
+        "nombres": "GONZALO AXEL",
+        "apellido_paterno": "VALDEZ",
+        "apellido_materno": "QUISPE",
+        "ubigeo": [
+            null,
+            null,
+            null
+        ]
+    },
+    "message": "Datos obtenidos correctamente."
+}
 
-
+{
+    "success": true,
+    "data": {
+        "direccion": "",
+        "direccion_completa": " ",
+        "ruc": "10768818555",
+        "nombre_o_razon_social": "VALDEZ QUISPE GONZALO AXEL",
+        "estado": "ACTIVO",
+        "condicion": "HABIDO",
+        "departamento": "-",
+        "provincia": "-",
+        "distrito": "-",
+        "ubigeo_sunat": "-",
+        "name": "VALDEZ QUISPE GONZALO AXEL",
+        "trade_name": "",
+        "address": " ",
+        "ubigeo": [
+            null,
+            null,
+            null
+        ],
+        "es_agente_de_retencion": "",
+        "es_buen_contribuyente": "",
+        "state": "ACTIVO"
+    },
+    "source": "apis.aqpfact.pe"
+}
+    """
 
 class RegistrarNotaCreditoView(APIView):
     """
@@ -165,8 +234,9 @@ class RegistrarNotaCreditoView(APIView):
             response = requests.post(php_backend_url, json=comprobante_data, headers=headers)
 
             if response.status_code != 200:
+                print(response)
                 return Response(
-                    {"error": "Error al enviar la nota de crédito al backend PHP"},
+                    {"error": "Error al enviar la nota de crédito al backend PHP" + str(response.text)},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 

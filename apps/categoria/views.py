@@ -28,6 +28,7 @@ class GetAllCategorias(APIView):
         tienda = request.user.tienda
         categorias = Categoria.objects.filter(tienda=tienda) 
         serializer = CategoriaSerializer(categorias, many=True)
+        print(serializer.data)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 # Obtener una categoria por ID

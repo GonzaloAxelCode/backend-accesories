@@ -119,8 +119,10 @@ class RegistrarVentaView(APIView):
                     
                          tipo_documento_cliente = "6" if data["tipoComprobante"] == "Factura" else "1",
                              numero_documento_cliente=cliente_data["ruc"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
-                             nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"]
-                     
+                             nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"],
+                             email_cliente  =  data.get("correo_cliente") if data.get("correo_cliente") else None,
+                             telefono_cliente   =  data.get("telefono_cliente") if data.get("telefono_cliente") else None,
+                             direccion_cliente  = data.get("direccion_cliente") if data.get("direccion_cliente") else None
                 )
                 subtotal = Decimal(0)
                 gravado_total = Decimal(0)
@@ -361,8 +363,10 @@ class RegistrarVentaSinComprobanteView(APIView):
                     estado="Pendiente",  
                     tipo_documento_cliente = "6" if data["tipoComprobante"] == "Factura" else "1",
                              numero_documento_cliente=cliente_data["ruc"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
-                             nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"]
-                     
+                             nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"],
+                       email_cliente  =  data.get("correo_cliente") if data.get("correo_cliente") else None,
+                             telefono_cliente   =  data.get("telefono_cliente") if data.get("telefono_cliente") else None,
+                             direccion_cliente  = data.get("direccion_cliente") if data.get("direccion_cliente") else None 
                 )
 
                 subtotal = Decimal(0)
@@ -452,8 +456,240 @@ class RegistrarVentaSinComprobanteView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class RegistrarVentaAnonimaView(APIView):
+    def post(self, request):
+        try:
+            data = request.data
 
+            # Validar que los datos obligatorios existan
+            if not all(k in data for k in ["usuarioId", "metodoPago", "tipoComprobante", "productos"]):
+                return Response({"error": "Faltan datos obligatorios"}, status=status.HTTP_400_BAD_REQUEST)
 
+            is_send_sunat = data.get("is_send_sunat", True)  # Por defecto true
+
+            def obtener_siguiente_serie_y_correlativoAnonimo():
+                serie_base = "B001"
+                ultimo_comprobante = ComprobanteElectronico.objects.filter(
+                    serie__startswith=serie_base
+                ).order_by('-serie', '-correlativo').first()
+
+                if ultimo_comprobante:
+                    serie_actual = ultimo_comprobante.serie
+                    correlativo_actual = int(ultimo_comprobante.correlativo) # type: ignore
+                    if correlativo_actual >= 99999999:
+                        nueva_serie = f"{serie_base[0]}{str(int(serie_actual[1:]) + 1).zfill(3)}" # type: ignore
+                        nuevo_correlativo = "00000001"
+                    else:
+                        nueva_serie = serie_actual
+                        nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
+                else:
+                    nueva_serie = serie_base
+                    nuevo_correlativo = "00000001"
+
+                return nueva_serie, nuevo_correlativo
+
+            tienda = request.user.tienda
+            usuario = request.user
+            fecha_hora_aware = timezone.make_aware(datetime.now())
+
+            with transaction.atomic():
+                # Crear la venta
+                venta = Venta.objects.create(
+                    usuario=usuario,
+                    tienda=tienda,
+                    metodo_pago=data["metodoPago"],
+                    tipo_comprobante="Boleta",
+                    fecha_hora=fecha_hora_aware,
+                    tipo_documento_cliente="1",
+                    numero_documento_cliente="00000000",
+                    nombre_cliente="CONSUMIDOR FINAL"  # Ajustado para varchar(10),
+                )
+
+                subtotal = Decimal(0)
+                gravado_total = Decimal(0)
+                igv_total = Decimal(0)
+                total = Decimal(0)
+                exonerado_total = Decimal(0)
+                productos_registrados = []
+                productos_items_for_sunat = []
+
+                for item in data["productos"]:
+                    inventario = get_object_or_404(Inventario, id=item["inventarioId"])
+                    producto = inventario.producto
+                    cantidad = int(item["cantidad_final"])
+                    precio_unitario = Decimal(inventario.costo_venta) # type: ignore
+                    porcentaje_igv = Decimal("18.00")
+                    valor_unitario = precio_unitario / (Decimal("1.00") + (porcentaje_igv / Decimal("100.00")))
+                    valor_venta = cantidad * valor_unitario
+                    igv = valor_venta * (porcentaje_igv / Decimal("100.00"))
+                    total_impuestos = igv
+
+                    venta_producto = VentaProducto.objects.create(
+                        venta=venta,
+                        producto=producto,
+                        cantidad=cantidad,
+                        valor_unitario=valor_unitario,
+                        valor_venta=valor_venta,
+                        base_igv=valor_venta,
+                        porcentaje_igv=porcentaje_igv,
+                        igv=igv,
+                        tipo_afectacion_igv="10",
+                        total_impuestos=total_impuestos,
+                        precio_unitario=precio_unitario,
+                    )
+
+                    inventario.cantidad -= cantidad
+                    inventario.save()
+
+                    subtotal += valor_venta
+                    gravado_total += valor_venta
+                    igv_total += igv
+                    total += precio_unitario * cantidad
+
+                    productos_registrados.append({
+                        "producto_id": producto.id, # type: ignore
+                        "producto_nombre": producto.nombre,
+                        "cantidad": cantidad,
+                        "valor_unitario": float(valor_unitario),
+                        "valor_venta": float(valor_venta),
+                        "igv": float(igv),
+                        "precio_unitario": float(precio_unitario),
+                    })
+
+                    productos_items_for_sunat.append({
+                        "codigo": producto.sku,
+                        "unidad": "NIU",
+                        "descripcion": producto.nombre,
+                        "cantidad": cantidad,
+                        "valorUnitario": round(float(valor_unitario), 2),
+                        "valorVenta": round(float(valor_venta), 2),
+                        "baseIgv": round(float(valor_venta), 2),
+                        "porcentajeIgv": 18,
+                        "igv": round(float(valor_venta * (porcentaje_igv / 100)), 2),
+                        "tipoAfectacionIgv": "10",
+                        "totalImpuestos": round(float(valor_venta * (porcentaje_igv / 100)), 2),
+                        "precioUnitario": round(float(precio_unitario), 2),
+                    })
+
+                venta.subtotal = subtotal
+                venta.gravado_total = gravado_total
+                venta.igv_total = igv_total
+                venta.total = total
+                venta.productos_json = productos_registrados
+                venta.save()
+
+                # Generar serie y correlativo
+                serie_generada, correlativo_generado = obtener_siguiente_serie_y_correlativoAnonimo()
+
+                comprobante_data = {
+                    "serie": serie_generada,
+                    "correlativo": correlativo_generado,
+                    "moneda": "PEN",
+                    "gravadas": float(gravado_total),
+                    "exoneradas": float(exonerado_total),
+                    "igv": float(igv_total),
+                    "valorVenta": float(subtotal),
+                    "subTotal": float(subtotal + igv_total),
+                    "total": float(total),
+                    "leyenda": f"SON {num2words(total, lang='es').upper()} CON 00/100 SOLES",
+                    "cliente": {
+                        "tipoDoc": "01",
+                        "numDoc": "00000000",
+                        "nombre": "CONSUMIDOR FINAL"
+                    },
+                    "items": productos_items_for_sunat
+                }
+
+                # Solo enviar a SUNAT si is_send_sunat es True
+                if is_send_sunat:
+                    php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php"
+                    headers = {"Content-Type": "application/json"}
+                    response = requests.post(php_backend_url_boleta, json=comprobante_data, headers=headers)
+
+                    try:
+                        response_json = response.json()
+                    except Exception:
+                        raise Exception(f"La API PHP devolvió una respuesta no JSON: {response.text}")
+
+                    estado_sunat = "Aceptado" if response_json.get("cdr_codigo") == "0" else "Rechazado"
+                    xml_url = response_json.get("xml_url")
+                    pdf_url = response_json.get("pdf_url")
+                    cdr_url = response_json.get("cdr_url")
+                    ticket_url = response_json.get("ticket_url")
+                else:
+                    estado_sunat = "Pendiente"
+                    xml_url = pdf_url = cdr_url = ticket_url = None
+
+                # Guardar comprobante
+                new_comprobante = ComprobanteElectronico.objects.create(
+                    venta=venta,
+                    tipo_comprobante="03",
+                    serie=serie_generada,
+                    correlativo=correlativo_generado,
+                    moneda="PEN",
+                    gravadas=Decimal(comprobante_data["gravadas"]),
+                    igv=Decimal(comprobante_data["igv"]),
+                    valorVenta=Decimal(comprobante_data["valorVenta"]),
+                    sub_total=Decimal(comprobante_data["subTotal"]),
+                    total=Decimal(comprobante_data["total"]),
+                    leyenda=comprobante_data["leyenda"],
+                    tipo_documento_cliente=comprobante_data["cliente"]["tipoDoc"],
+                    numero_documento_cliente=comprobante_data["cliente"]["numDoc"],
+                    nombre_cliente=comprobante_data["cliente"]["nombre"],
+                    estado_sunat=estado_sunat,
+                    xml_url=xml_url,
+                    pdf_url=pdf_url,
+                    cdr_url=cdr_url,
+                    ticket_url=ticket_url,
+                    items=comprobante_data["items"]
+                )
+                new_comprobante.save()
+                comprobante_json = {
+                        "tipo_comprobante": new_comprobante.tipo_comprobante,
+                        "serie": new_comprobante.serie,
+                        "correlativo": new_comprobante.correlativo,
+                        "moneda": new_comprobante.moneda,
+                        "gravadas": float(new_comprobante.gravadas), # type: ignore
+                        "igv": float(new_comprobante.igv), # type: ignore
+                        "valorVenta": float(new_comprobante.valorVenta), # type: ignore
+                        "sub_total": float(new_comprobante.sub_total), # type: ignore
+                        "total": float(new_comprobante.total), # type: ignore
+                        "leyenda": new_comprobante.leyenda,
+                        "tipo_documento_cliente": new_comprobante.tipo_documento_cliente,
+                        "numero_documento_cliente": new_comprobante.numero_documento_cliente,
+                        "nombre_cliente": new_comprobante.nombre_cliente,
+                        "estado_sunat": new_comprobante.estado_sunat,
+                        "xml_url": new_comprobante.xml_url,
+                        "pdf_url": new_comprobante.pdf_url,
+                        "cdr_url": new_comprobante.cdr_url,
+                        "ticket_url": new_comprobante.ticket_url,
+                        "items": new_comprobante.items
+                    }
+                venta_json = {
+                      "id": venta.id, # type: ignore
+                        "usuario":  usuario.id, # type: ignore
+                        "tienda": tienda.id, # type: ignore
+                        "metodo_pago": venta.metodo_pago,
+                        "tipo_comprobante": venta.tipo_comprobante,
+                        "metodo_pago" :venta.metodo_pago,
+                        "estado" :venta.estado,
+                        "activo" :venta.activo,
+                        "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
+                        "fecha_realizacion" :venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
+                        "subtotal": float(subtotal),
+                        "gravado_total": float(gravado_total),
+                        "igv_total": float(igv_total),
+                        "total": float(total),
+                        "productos_json": json.dumps(productos_registrados),
+                        "productos": productos_registrados,
+                        "comprobante_data":comprobante_data ,                
+                        "comprobante": comprobante_json   
+                }
+
+                return Response(venta_json, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 

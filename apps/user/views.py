@@ -21,33 +21,21 @@ class GetAllUsersAPIView(APIView):
 
     def get(self, request):
         authenticated_user = request.user
-        
         users = UserAccount.objects.exclude(id=authenticated_user.id).filter(is_superuser=False)
 
-
-        # 1. Obtener TODOS los permisos definidos en Meta (array de strings)
         all_permissions_meta = [perm[0] for perm in UserAccount._meta.permissions]
 
         users_data = []
         for user in users:
-            # 2. Obtener los permisos del usuario actual (solo los que están en Meta)
-            user_permissions_raw = user.get_all_permissions()  # Permisos en formato 'app_label.perm_codename'
-            
-            # Filtramos para quedarnos solo con los permisos definidos en Meta
+            user_permissions_raw = user.get_all_permissions()
             user_permissions_filtered = [
-                perm.split('.')[1]  # Extraemos solo el 'perm_codename' (ej: 'can_make_sale')
+                perm.split('.')[1]
                 for perm in user_permissions_raw
-                if perm.split('.')[1] in all_permissions_meta  # Solo si está en Meta
+                if perm.split('.')[1] in all_permissions_meta
             ]
-            all_permissions_meta = [perm[0] for perm in UserAccount._meta.permissions]
 
-            # 3. Construir el diccionario de permisos {permiso: bool}
-            permissions = {}
-            for perm in all_permissions_meta:
-                permissions[perm] = perm in user_permissions_filtered  # True si lo tiene, False si no
+            permissions = {perm: perm in user_permissions_filtered for perm in all_permissions_meta}
 
-
-            # 4. Construir el JSON del usuario
             user_data = {
                 'id': user.id, # type: ignore
                 'username': user.username,
@@ -60,16 +48,17 @@ class GetAllUsersAPIView(APIView):
                 'is_superuser': user.is_superuser,
                 'es_empleado': user.es_empleado,
                 'desactivate_account': user.desactivate_account,
-                'permissions': permissions,  # Diccionario de permisos (Meta + bool)
-                'user_permissions_list': user_permissions_filtered,  # Solo permisos de Meta que tiene el usuario
-                "all_permissions_meta":all_permissions_meta,
-                "tienda": user.tienda,
-                                        'tienda_nombre': user.tienda.nombre if user.tienda else None # type: ignore
+                'permissions': permissions,
+                'user_permissions_list': user_permissions_filtered,
+                'all_permissions_meta': all_permissions_meta,
+                # ✅ Evita el error JSON no serializable
+                'tienda_id': user.tienda.id if user.tienda else None, # type: ignore
+                'tienda_nombre': user.tienda.nombre if user.tienda else None,
             }
+
             users_data.append(user_data)
 
         return Response(users_data)
-
 
 class GetUserAPIView(APIView):
     permission_classes = [IsSuperUser]
