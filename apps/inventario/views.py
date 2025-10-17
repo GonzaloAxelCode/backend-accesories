@@ -14,6 +14,7 @@ from apps.inventario.serializers import InventarioSerializer
 from apps.producto.models import Producto
 from apps.producto.serializers import ProductoSerializer
 from apps.proveedor.models import Proveedor
+from core.permissions import CanCreateInventoryPermission, CanDeleteInventoryPermission, CanModifyInventoryPermission
 
 User = get_user_model()
 
@@ -27,8 +28,9 @@ class InventarioPagination(PageNumberPagination):
 
 # ---------- CREAR INVENTARIO ----------
 class CrearInventario(APIView):
-    permission_classes=[IsAuthenticated]
+    permission_classes=[IsAuthenticated,CanCreateInventoryPermission]
     def post(self, request):
+        
         try:
             data = request.data
             tienda = getattr(request.user, "tienda", None)
@@ -69,7 +71,14 @@ class CrearInventario(APIView):
 
 
 class GetAllInventarioAPIView(APIView):
+    permission_classes=[IsAuthenticated]
     def get(self, request):
+        user = request.user
+        print("Tipo:", type(user))
+        print("Usuario:", user)
+        print("Autenticado:", user.is_authenticated)
+        print("Auth info:", request.auth)
+
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
             return Response(
@@ -89,6 +98,7 @@ class GetAllInventarioAPIView(APIView):
         })
 
 class GetAllInventarioAPIViewWithpagination(APIView):
+    permission_classes=[IsAuthenticated]
     def get(self, request):
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
@@ -126,6 +136,7 @@ class GetAllInventarioAPIViewWithpagination(APIView):
 
 # ---------- INVENTARIO POR PRODUCTO ----------
 class ObtenerInventarioProducto(APIView):
+    permission_classes=[IsAuthenticated]
     def get(self, request, producto_id):
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
@@ -141,6 +152,7 @@ class ObtenerInventarioProducto(APIView):
 
 # ---------- ACTUALIZAR STOCK ----------
 class ActualizarStock(APIView):
+    permission_classes=[IsAuthenticated,CanModifyInventoryPermission]
     def patch(self, request, inventario_id):
         try:
             tienda = getattr(request.user, "tienda", None)
@@ -165,6 +177,7 @@ class ActualizarStock(APIView):
 
 # ---------- ACTUALIZAR INVENTARIO ----------
 class ActualizarInventarioView(APIView):
+    permission_classes=[IsAuthenticated,CanModifyInventoryPermission]
     def patch(self, request, *args, **kwargs):
         try:
             tienda = getattr(request.user, "tienda", None)
@@ -199,6 +212,7 @@ class ActualizarInventarioView(APIView):
 
 # ---------- ELIMINAR INVENTARIO ----------
 class EliminarInventario(APIView):
+    permission_classes=[IsAuthenticated,CanDeleteInventoryPermission]
     def delete(self, request, inventario_id):
         tienda = getattr(request.user, "tienda", None)
         inventario = get_object_or_404(Inventario, id=inventario_id, tienda=tienda)
@@ -208,6 +222,7 @@ class EliminarInventario(APIView):
 
 # ---------- VERIFICAR STOCK ----------
 class VerificarStock(APIView):
+    permission_classes=[IsAuthenticated]
     def get(self, request, inventario_id):
         try:
             tienda = getattr(request.user, "tienda", None)
@@ -236,6 +251,7 @@ class VerificarStock(APIView):
 
 # ---------- 10 PRODUCTOS CON MENOR STOCK ----------
 class ProductosConMenorStockView(APIView):
+    permission_classes=[IsAuthenticated]
     def get(self, request):
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
@@ -264,6 +280,7 @@ class ProductosConMenorStockView(APIView):
 # ---------- BUSCAR INVENTARIO ----------
 
 class BuscarInventarioAPIViewSinRangos(APIView):
+    permission_classes=[IsAuthenticated]
     def post(self, request):
         data = request.data
         query = data.get("query", data)  # soporta {query:{}} o plano
@@ -336,6 +353,7 @@ class BuscarInventarioAPIViewSinRangos(APIView):
 # ---------- BUSCAR INVENTARIO ----------
 
 class BuscarInventarioAPIView(APIView):
+    permission_classes=[IsAuthenticated]
     def post(self, request):
         data = request.data
         query = data.get("query", data)  # soporta {query:{}} o plano

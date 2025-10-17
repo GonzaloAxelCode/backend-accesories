@@ -28,38 +28,13 @@ from django.utils import timezone
 import requests
 import json
 from datetime import datetime
-
-from core.settings import SUNAT_PHP
-
-class GenerarComprobanteView(APIView):
-    def post(self, request, venta_id):
-        venta = get_object_or_404(Venta, id=venta_id)
-
-   
-        return Response({
-            'mensaje': 'Comprobante generado',
-            'estado_sunat': '',
-        }, status=status.HTTP_201_CREATED)
-
-
-class ListarComprobantesView(APIView):
-    def get(self, request):
-        comprobantes = ComprobanteElectronico.objects.all()
-        return JsonResponse(list(comprobantes), safe=False)
-
-
-class ConsultaRUCView(APIView):
-    def get(self, request, ruc):
-        
-        return Response({"ruc": ruc, "data": 'ejemplo'}, status=status.HTTP_200_OK)
-
-class ConsultaDNIView(APIView):
-    def get(self, request, dni):
-               return Response({"dni": dni, "data": "ejemplo"}, status=status.HTTP_200_OK)
 import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from core.permissions import CanCancelSalePermission, CanMakeSalePermission
+from core.settings import SUNAT_PHP
+from rest_framework.permissions import IsAuthenticated
 
 class ConsultaDocumentoView(APIView):
     API_TOKEN = "7575|WSDJNfDbCzRGohY4KRLEtyjPyjXX0Zm2XXlVR1Sz"
@@ -162,11 +137,7 @@ class ConsultaDocumentoView(APIView):
     """
 
 class RegistrarNotaCreditoView(APIView):
-    """
-    Vista para emitir una Nota de Crédito electrónica
-    relacionada a una venta existente (Factura o Boleta).
-    """
-
+    permission_classes = [IsAuthenticated, CanCancelSalePermission]  
     def post(self, request):
         try:
             data = request.data

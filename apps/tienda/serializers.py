@@ -11,16 +11,5 @@ class TiendaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Tienda
-        fields = [
-            "id",
-            "nombre",
-            "direccion",
-            "ciudad",
-            "telefono",
-            "activo",
-            "encargado",
-            "capacidad",
-            "ruc",
-            "imagen",
-            "users_tienda",  # 👈 añadimos lista de usuarios
-        ]
+        fields = '__all__'
+  

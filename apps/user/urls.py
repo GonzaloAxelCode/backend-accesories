@@ -6,7 +6,7 @@ from .views import (
     CustomTokenObtainPairView,
     GetAllUsersAPIView,
     GetCurrentUserAPIView,
-    GetUserAPIView,
+    
     
     UpdateUserAPIView,
     DeleteUserAPIView,
@@ -14,8 +14,9 @@ from .views import (
 )
 
 urlpatterns = [
-    path('usuarios/', GetAllUsersAPIView.as_view(), name='get_all_users'),
-    path('usuarios/<int:id>/', GetUserAPIView.as_view(), name='get_user'),
+    
+   path('usuarios/tienda/<int:tienda_id>/', GetAllUsersAPIView.as_view(), name='get_users_by_store'),
+ 
     path('usuarios/create/<int:tienda_id>/', CreateUserInTiendaAPIView.as_view(), name='create_user'),
     path('usuarios/update/<int:id>/', UpdateUserAPIView.as_view(), name='update_user'),
     path('usuarios/delete/<int:id>/', DeleteUserAPIView.as_view(), name='delete_user'),

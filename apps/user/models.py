@@ -84,8 +84,10 @@ class UserAccount(AbstractBaseUser, PermissionsMixin):
             ("view_category", "Puede ver las categorías"),
             ("view_supplier", "Puede ver los proveedores"),
             ("view_store", "Puede ver las tiendas"),
-            ("can_create_user", "Puede crear nuevos usuarios")
-
+            ("can_create_user", "Puede crear nuevos usuarios"),
+            ("can_create_proveedor", "Puede crear un proveedor"),
+            ("can_update_proveedor", "Puede actualizar un proveedor"),
+            ("can_delete_proveedor", "Puede eliminar un proveedor"),
         ]
         ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
 

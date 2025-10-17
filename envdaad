@@ -1,0 +1,11 @@
+# Desarrollo
+DEBUG=True
+SECRET_KEY=django-insecure-b_(uj)meht&*#4#223px8w@t=l6emfbdtw2jcw+ei39d!j&5c%
+ALLOWED_HOSTS=localhost,127.0.0.1
+
+# Base de datos
+DATABASE_URL=postgresql://neondb_owner:npg_oqhXbA0yBu4H@ep-spring-fire-aexumthn.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+DATABASE_URL_=postgresql://postgres:1234@localhost:5432/BETA_SUNAT
+
+DOMAIN=http://localhost:8000
+SITE_DOMAIN=localhost:8000

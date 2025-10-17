@@ -7,30 +7,30 @@ from rest_framework.pagination import PageNumberPagination
 
 from apps.producto.models import Producto
 from apps.producto.serializers import ProductoSerializer
+from django.db.models import Q
+
+from django.db.models import Q
+import re
+
+from django.db.models import Q
+import re
 
 
-# ---------- PAGINACIÓN ----------
+
+from django.db.models import Q
+import re
+from rest_framework.permissions import IsAuthenticated
+
+from core.permissions import CanCreateProductPermission, CanDeleteProductPermission, CanUpdateProductPermission
+
 class ProductoPagination(PageNumberPagination):
     page_size = 5
     page_size_query_param = 'page_size'
     max_page_size = 100
 
 
-
-from django.db.models import Q
-
-from django.db.models import Q
-import re
-
-from django.db.models import Q
-import re
-
-
-
-from django.db.models import Q
-import re
-
 class BuscarProductoAPIView(APIView):
+    permission_classes = [IsAuthenticated]
     def post(self, request):
         data = request.data
         query = data.get("query", data)  # soporta {query:{}} o plano
@@ -105,6 +105,7 @@ class BuscarProductoAPIView(APIView):
 
 # ---------- LISTAR TODOS LOS PRODUCTOS ----------
 class GetAllProductosAPIViewWithpagination(APIView):
+    permission_classes = [IsAuthenticated]
     def get(self, request):
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
@@ -139,6 +140,7 @@ class GetAllProductosAPIViewWithpagination(APIView):
         })
 
 class GetAllProductosAPIView(APIView):
+    permission_classes = [IsAuthenticated]
     def get(self, request):
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
@@ -157,6 +159,7 @@ class GetAllProductosAPIView(APIView):
 
 # ---------- OBTENER UN SOLO PRODUCTO ----------
 class GetProductoAPIView(APIView):
+    permission_classes = [IsAuthenticated]
     def get(self, request, id):
         tienda = getattr(request.user, "tienda", None)
         producto = get_object_or_404(Producto, id=id, tienda=tienda)
@@ -166,6 +169,7 @@ class GetProductoAPIView(APIView):
 
 # ---------- CREAR UN PRODUCTO ----------
 class CreateProductoAPIView(APIView):
+    permission_classes = [IsAuthenticated,CanCreateProductPermission]
     def post(self, request):
         data = request.data
         tienda = getattr(request.user, "tienda", None)
@@ -199,6 +203,7 @@ class CreateProductoAPIView(APIView):
 
 # ---------- ACTUALIZAR PRODUCTO ----------
 class UpdateProductoAPIView(APIView):
+    permission_classes = [IsAuthenticated,CanUpdateProductPermission]
     def put(self, request, id):
         tienda = getattr(request.user, "tienda", None)
         producto = get_object_or_404(Producto, id=id, tienda=tienda)
@@ -215,6 +220,7 @@ class UpdateProductoAPIView(APIView):
 
 # ---------- ELIMINAR PRODUCTO ----------
 class DeleteProductoAPIView(APIView):
+    permission_classes = [IsAuthenticated,CanDeleteProductPermission]
     def delete(self, request, id):
         tienda = getattr(request.user, "tienda", None)
         producto = get_object_or_404(Producto, id=id, tienda=tienda)

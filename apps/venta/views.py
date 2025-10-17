@@ -1,3 +1,4 @@
+from ast import Is
 from collections import Counter
 from datetime import timedelta
 from django.utils.dateparse import parse_date
@@ -35,6 +36,7 @@ from apps.comprobante.models import ComprobanteElectronico
 from apps.inventario.models import Inventario
 from apps.producto.serializers import ProductoSerializer
 from apps.venta.serialzers import VentaSerializer
+from core.permissions import CanCancelSalePermission, CanMakeSalePermission, IsSuperUser
 from core.settings import SUNAT_PHP
 from .models import Venta, VentaProducto, Tienda, Producto
 from apps.venta.utils import normalize_date
@@ -47,14 +49,15 @@ from datetime import date, timedelta
 from django.utils import timezone
 from django.utils.timezone import localtime, make_aware
 from django.db.models.functions import Coalesce
-
+from rest_framework.permissions import IsAuthenticated        
 class VentaPagination(PageNumberPagination):
     page_size = 5  # Número predeterminado de ventas por página
     page_size_query_param = 'page_size'  
     max_page_size = 100  
     
     
-class RegistrarVentaView(APIView):  
+class RegistrarVentaView(APIView): 
+    permission_classes = [IsAuthenticated,CanMakeSalePermission]
     def post(self, request):
         try:
             data = request.data
@@ -336,6 +339,7 @@ class RegistrarVentaView(APIView):
 
 
 class RegistrarVentaSinComprobanteView(APIView):
+    permission_classes = [IsAuthenticated,CanMakeSalePermission]
     def post(self, request):
         try:
             data = request.data
@@ -457,6 +461,7 @@ class RegistrarVentaSinComprobanteView(APIView):
 
 
 class RegistrarVentaAnonimaView(APIView):
+    permission_classes = [IsAuthenticated,CanMakeSalePermission]
     def post(self, request):
         try:
             data = request.data
@@ -694,6 +699,7 @@ class RegistrarVentaAnonimaView(APIView):
 
 
 class CancelarVentaView(APIView):
+    permission_classes = [IsAuthenticated,CanCancelSalePermission]
     def patch(self, request, venta_id):
         # Obtener la venta o devolver 404 si no existe
         venta = get_object_or_404(Venta, id=venta_id)
@@ -719,6 +725,7 @@ class CancelarVentaView(APIView):
         
 ''' no usar eso solo en desarrollo'''
 class EliminarVentaView(APIView):
+    permission_classes = [IsAuthenticated, IsSuperUser]
     def delete(self, request, venta_id):
         # Obtener la venta o devolver 404 si no existe
         venta = get_object_or_404(Venta, id=venta_id)
@@ -772,6 +779,7 @@ class VentasResumenView(APIView):
 
 
 class VentaSalesByDateView(APIView):
+    permission_classes = [IsAuthenticated]
     def post(self, request, *args, **kwargs):
         # Obtener los rangos de fechas desde el cuerpo de la solicitud
         from_date = request.data.get('from_date')  # Expected format: [2025, 0, 1] para enero
@@ -824,6 +832,7 @@ class VentaSalesByDateView(APIView):
 
 
 class ProductosMasVendidosView(APIView):
+    permission_classes = [IsAuthenticated]
     def post(self, request):
         fd = request.data.get('from_date')
         td = request.data.get('to_date')
@@ -926,6 +935,7 @@ class VentasPerDayOrMonth(APIView):
 
         
 class VentaBusquedaView(APIView):
+    permission_classes = [IsAuthenticated]
     def post(self, request):
         
             page_number = int(request.data.get('page', 1))
@@ -1096,6 +1106,7 @@ class VentaBusquedaView(APIView):
 
     
 class VentasPorTiendaView(APIView):
+    permission_classes = [IsAuthenticated]
     def get(self, request):
         try:
             # Obtener parámetros de la URL

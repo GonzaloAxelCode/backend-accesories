@@ -5,13 +5,15 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
+
+from core.permissions import IsSuperUser
 from .models import Tienda
 from django.contrib.auth import get_user_model
 from .serializers import TiendaSerializer
 from rest_framework.permissions import IsAuthenticated
 User = get_user_model()
 class CreateTienda(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated,IsSuperUser]
     
     def post(self, request):
         if not request.user.is_superuser:
@@ -36,7 +38,7 @@ class CreateTienda(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 # Obtener todas las tiendas
 class GetAllTiendas(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated,IsSuperUser]
     def get(self, request):
         if not request.user.is_superuser:
             return Response({"error": "No tienes permisos para realizar esta acción."}, status=status.HTTP_403_FORBIDDEN)
@@ -47,7 +49,7 @@ class GetAllTiendas(APIView):
 
 # Obtener una tienda por ID
 class GetTienda(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated,IsSuperUser]
     def get(self, request, id):
         tienda = get_object_or_404(Tienda, id=id)
         serializer = TiendaSerializer(tienda)
@@ -55,7 +57,7 @@ class GetTienda(APIView):
 
 # Actualizar una tienda por ID
 class UpdateTienda(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated,IsSuperUser]
 
     def put(self, request, id):
         if not request.user.is_superuser:
@@ -70,7 +72,7 @@ class UpdateTienda(APIView):
 
 
 class DeactivateTienda(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated,IsSuperUser]
 
     def patch(self, request, id):
         if not request.user.is_superuser:

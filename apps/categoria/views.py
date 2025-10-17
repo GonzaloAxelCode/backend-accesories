@@ -5,14 +5,18 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
+from rest_framework.permissions import IsAuthenticated
 
 from apps.categoria.serializers import CategoriaSerializer
 from apps.tienda.models import Tienda
+from core.permissions import CanCreateCategoryPermission, CanDeleteCategoryPermission, CanModifyCategoryPermission
 from .models import Categoria
 
 
 # Crear una nueva categoria
 class CreateCategoria(APIView):
+    permission_classes = [IsAuthenticated,CanCreateCategoryPermission]
+
     def post(self, request):
         data = request.data
         tienda = request.user.tienda
@@ -24,6 +28,7 @@ class CreateCategoria(APIView):
 
 # Obtener todas las categorias
 class GetAllCategorias(APIView):
+    permission_classes = [IsAuthenticated]
     def get(self, request):
         tienda = request.user.tienda
         categorias = Categoria.objects.filter(tienda=tienda) 
@@ -33,6 +38,7 @@ class GetAllCategorias(APIView):
 
 # Obtener una categoria por ID
 class GetCategoria(APIView):
+    permission_classes = [IsAuthenticated]
     def get(self, request, id):
         categoria = get_object_or_404(Categoria, id=id)
         serializer = CategoriaSerializer(categoria)
@@ -40,6 +46,7 @@ class GetCategoria(APIView):
 
 # Actualizar una categoria por ID
 class UpdateCategoria(APIView):
+    permission_classes = [IsAuthenticated,CanModifyCategoryPermission]    
     def put(self, request, id):
         categoria = get_object_or_404(Categoria, id=id)
         serializer = CategoriaSerializer(categoria, data=request.data, partial=True)
@@ -50,12 +57,15 @@ class UpdateCategoria(APIView):
 
 # Desactivar una categoria por ID
 class DeactivateCategoria(APIView):
+    
+    permission_classes = [IsAuthenticated,CanDeleteCategoryPermission]    
     def patch(self, request, id):
         categoria = get_object_or_404(Categoria, id=id)
         categoria.activo = False
         categoria.save()
         return Response({"message": "Categoria desactivada exitosamente"}, status=status.HTTP_200_OK)
 class DeleteCategoria(APIView):
+    permission_classes = [IsAuthenticated,CanDeleteCategoryPermission]    
     def delete(self, request, id):
         categoria = get_object_or_404(Categoria, id=id)
         categoria.delete()
