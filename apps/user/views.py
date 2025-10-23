@@ -189,22 +189,88 @@ class CreateUserInTiendaAPIView(APIView):
     permission_classes = [IsAuthenticated, IsSuperUser]
 
     def post(self, request, tienda_id):
-     
         tienda = get_object_or_404(Tienda, id=tienda_id)
 
-        # Clonar los datos y asignar tienda
+        # Clonar los datos y forzar la tienda
         data = request.data.copy()
-        data["tienda"] = tienda.id   # type: ignore # 👈 Forzamos la tienda que viene en la URL
+        data["tienda"] = tienda.id  # type: ignore
 
         serializer = UserAccountSerializer(data=data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(
-                {"message": "Usuario creado exitosamente", "usuario": serializer.data},
-                status=status.HTTP_201_CREATED,
-            )
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Guardar el nuevo usuario
+        user = serializer.save()
+        if isinstance(user, list):  # ✅ En caso de que devuelva lista
+            user = user[0]
+
+        # 🔹 Definir los permisos (igual que en GetCurrentUserAPIView)
+        ALL_PERMISSIONS = [
+            "can_make_sale",
+            "can_cancel_sale",
+            "can_create_inventory",
+            "can_modify_inventory",
+            "can_update_inventory",
+            "can_delete_inventory",
+            "can_create_product",
+            "can_update_product",
+            "can_delete_product",
+            "can_create_category",
+            "can_modify_category",
+            "can_delete_category",
+            "can_create_supplier",
+            "can_modify_supplier",
+            "can_delete_supplier",
+            "can_create_store",
+            "can_modify_store",
+            "can_delete_store",
+            "view_sale",
+            "view_inventory",
+            "view_product",
+            "view_category",
+            "view_supplier",
+            "view_store",
+            "can_create_user",
+            "can_create_proveedor",
+            "can_update_proveedor",
+            "can_delete_proveedor",
+        ]
+
+        # 🔹 Obtener los permisos reales del nuevo usuario
+        user_permissions_full = user.get_all_permissions()  # type: ignore
+        user_permission_codenames = [
+            perm.split('.')[1] for perm in user_permissions_full
+        ]
+
+        permissions_dict = {
+            perm: perm in user_permission_codenames for perm in ALL_PERMISSIONS
+        }
+
+        # 🔹 Armar la respuesta igual que en GetCurrentUserAPIView
+        response_data = {
+            'id': user.id,
+            'username': user.username,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'photo_url': user.photo_url,
+            'date_joined': user.date_joined,
+            'is_active': user.is_active,
+            'is_staff': user.is_staff,
+            'is_superuser': user.is_superuser,
+            'es_empleado': user.es_empleado,
+            'desactivate_account': user.desactivate_account,
+            'permissions': permissions_dict,
+            'user_permissions_list': user_permission_codenames,
+            'all_permissions_meta': ALL_PERMISSIONS,
+            'tienda': user.tienda.id if user.tienda else None,
+            'tienda_nombre': user.tienda.nombre if user.tienda else None,
+        }
+
+        return Response(
+            {"message": "Usuario creado exitosamente", "usuario": response_data},
+            status=status.HTTP_201_CREATED,
+        )
+    
 class UpdateUserAPIView(APIView):
     permission_classes = [IsAuthenticated,IsSuperUser]
     def put(self, request, id):

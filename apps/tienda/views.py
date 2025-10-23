@@ -43,7 +43,7 @@ class GetAllTiendas(APIView):
         if not request.user.is_superuser:
             return Response({"error": "No tienes permisos para realizar esta acción."}, status=status.HTTP_403_FORBIDDEN)
 
-        tiendas = Tienda.objects.all()
+        tiendas = Tienda.objects.filter(is_deleted=False)
         serializer = TiendaSerializer(tiendas, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -109,3 +109,16 @@ class DeactivateTienda(APIView):
             {"message": mensaje, "tienda_id": tienda.id, "activo": tienda.activo}, # type: ignore
             status=status.HTTP_200_OK
         )
+
+# Eliminar una tienda por ID
+class DeleteTienda(APIView):
+    permission_classes = [IsAuthenticated,IsSuperUser]
+
+    def delete(self, request, id):
+        if not request.user.is_superuser:
+            return Response({"error": "No tienes permisos para realizar esta acción."}, status=status.HTTP_403_FORBIDDEN)
+
+        tienda = get_object_or_404(Tienda, id=id)
+        tienda.is_deleted = True
+        tienda.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)

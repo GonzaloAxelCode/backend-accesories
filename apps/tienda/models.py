@@ -14,6 +14,7 @@ class Tienda(models.Model):
     encargado = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="tienda_encargada"
     )
+    is_deleted = models.BooleanField(default=False)
     capacidad = models.IntegerField( null=True, blank=True)
     ruc = models.CharField(max_length=15)
     imagen = models.ImageField(upload_to='tiendas/', null=True, blank=True)
