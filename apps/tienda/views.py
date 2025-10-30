@@ -121,4 +121,30 @@ class DeleteTienda(APIView):
         tienda = get_object_or_404(Tienda, id=id)
         tienda.is_deleted = True
         tienda.save()
+        User.objects.filter(tienda=tienda).update(is_active=False)
+
         return Response(status=status.HTTP_204_NO_CONTENT)
+    
+
+# Habilitar una tienda eliminada por ID
+class HabilitarTiendaEliminada(APIView):
+    permission_classes = [IsAuthenticated, IsSuperUser]
+
+    def put(self, request, id):
+        if not request.user.is_superuser:
+            return Response(
+                {"error": "No tienes permisos para realizar esta acción."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        tienda = get_object_or_404(Tienda, id=id)
+        tienda.is_deleted = False
+        tienda.save()
+
+        # 🔓 Reactivar todos los usuarios de esa tienda
+        User.objects.filter(tienda=tienda).update(is_active=True)
+
+        return Response(
+            {"message": "Tienda habilitada y usuarios reactivados correctamente."},
+            status=status.HTTP_200_OK
+        )
