@@ -1,10 +1,12 @@
-from math import ceil
+from math import ceil, prod
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
+from apps.inventario.models import Inventario
 from apps.producto.models import Producto
 from apps.producto.serializers import ProductoSerializer
 from django.db.models import Q
@@ -15,6 +17,7 @@ import re
 from django.db.models import Q
 import re
 
+from rest_framework.parsers import MultiPartParser, FormParser
 
 
 from django.db.models import Q
@@ -113,7 +116,7 @@ class GetAllProductosAPIViewWithpagination(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         productos = Producto.objects.filter(tienda=tienda).order_by('id')
-        serializer_all = ProductoSerializer(Producto.objects.filter(tienda=tienda).order_by('id'), many=True)
+        serializer_all = ProductoSerializer(Producto.objects.filter(tienda=tienda,activo=True).order_by('id'), many=True)
         total_productos = productos.count()
 
         page_size = int(request.query_params.get('page_size', 5))
@@ -148,7 +151,7 @@ class GetAllProductosAPIView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         
-        serializer_all = ProductoSerializer(Producto.objects.filter(tienda=tienda), many=True)
+        serializer_all = ProductoSerializer(Producto.objects.filter(tienda=tienda,activo=True), many=True)
        
 
         return Response({
@@ -162,14 +165,13 @@ class GetProductoAPIView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request, id):
         tienda = getattr(request.user, "tienda", None)
-        producto = get_object_or_404(Producto, id=id, tienda=tienda)
+        producto = get_object_or_404(Producto, id=id, tienda=tienda,activo=True)
         serializer = ProductoSerializer(producto)
         return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-# ---------- CREAR UN PRODUCTO ----------
 class CreateProductoAPIView(APIView):
-    permission_classes = [IsAuthenticated,CanCreateProductPermission]
+    permission_classes = [IsAuthenticated, CanCreateProductPermission]
+    parser_classes = [MultiPartParser, FormParser]  # <- Permite subir archivos
+
     def post(self, request):
         data = request.data
         tienda = getattr(request.user, "tienda", None)
@@ -192,7 +194,7 @@ class CreateProductoAPIView(APIView):
 
         serializer = ProductoSerializer(data=data)
         if serializer.is_valid():
-            serializer.save(tienda=tienda)
+            serializer.save(tienda=tienda,activo=True)
             return Response({
                 "message": "Producto creado exitosamente",
                 "producto": serializer.data
@@ -201,9 +203,10 @@ class CreateProductoAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# ---------- ACTUALIZAR PRODUCTO ----------
 class UpdateProductoAPIView(APIView):
-    permission_classes = [IsAuthenticated,CanUpdateProductPermission]
+    permission_classes = [IsAuthenticated, CanUpdateProductPermission]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]  # 👈 Agregar parsers para manejar archivos
+    
     def put(self, request, id):
         tienda = getattr(request.user, "tienda", None)
         producto = get_object_or_404(Producto, id=id, tienda=tienda)
@@ -217,14 +220,18 @@ class UpdateProductoAPIView(APIView):
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 # ---------- ELIMINAR PRODUCTO ----------
 class DeleteProductoAPIView(APIView):
     permission_classes = [IsAuthenticated,CanDeleteProductPermission]
     def delete(self, request, id):
         tienda = getattr(request.user, "tienda", None)
         producto = get_object_or_404(Producto, id=id, tienda=tienda)
-        producto.delete()
+        producto.activo = False
+        producto.categoria = None
+        producto.nombre = f"{producto.nombre}(Delete)"
+        producto.save()
+        Inventario.objects.filter(producto=producto, tienda=tienda).update(activo=False)
+ 
         return Response({
             "message": "Producto eliminado exitosamente"
         }, status=status.HTTP_204_NO_CONTENT)

@@ -1,3 +1,4 @@
+
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -38,19 +39,19 @@ class CrearInventario(APIView):
                 return Response({"error": "El usuario no tiene una tienda asignada."}, status=status.HTTP_400_BAD_REQUEST)
 
             producto = get_object_or_404(Producto, id=data.get("producto"))
-            proveedor = get_object_or_404(Proveedor, id=data.get("proveedor"))
+            #proveedor = get_object_or_404(Proveedor, id=data.get("proveedor"))
             user = request.user
 
-            if Inventario.objects.filter(producto=producto, tienda=tienda, proveedor=proveedor).exists():
+            if Inventario.objects.filter(producto=producto, tienda=tienda).exists():
                 return Response(
-                    {"message": "Ya existe un inventario con este producto y proveedor para esta tienda.",
+                    {"message": "Ya existe un inventario con este producto para esta tienda.",
                      "string_err": "inventario_existente"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
             nuevo_inventario = Inventario.objects.create(
                 responsable=user,
-                proveedor=proveedor,
+                #proveedor=proveedor,
                 descripcion=data.get("descripcion", ""),
                 producto=producto,
                 tienda=tienda,
@@ -90,7 +91,7 @@ class GetAllInventarioAPIView(APIView):
         
         
         serializer = InventarioSerializer(qs, many=True)    
-
+        print("--------------------------",serializer.data)
 
         return Response({
             

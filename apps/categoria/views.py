@@ -31,8 +31,8 @@ class GetAllCategorias(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
         tienda = request.user.tienda
-        categorias = Categoria.objects.filter(tienda=tienda) 
-        serializer = CategoriaSerializer(categorias, many=True)
+        categorias = Categoria.objects.filter(tienda=tienda,activo=True) 
+        serializer = CategoriaSerializer(categorias, many=True,)
         print(serializer.data)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -62,11 +62,14 @@ class DeactivateCategoria(APIView):
     def patch(self, request, id):
         categoria = get_object_or_404(Categoria, id=id)
         categoria.activo = False
+        categoria.nombre = f"{categoria.nombre}(Delete)_{categoria.id}" # type: ignore
         categoria.save()
         return Response({"message": "Categoria desactivada exitosamente"}, status=status.HTTP_200_OK)
 class DeleteCategoria(APIView):
     permission_classes = [IsAuthenticated,CanDeleteCategoryPermission]    
     def delete(self, request, id):
         categoria = get_object_or_404(Categoria, id=id)
-        categoria.delete()
+        categoria.activo = False
+        categoria.nombre = f"{categoria.nombre}(Delete)_{categoria.id}" # type: ignore
+        categoria.save()
         return Response({"message": "Categoria eliminada exitosamente"}, status=status.HTTP_204_NO_CONTENT)

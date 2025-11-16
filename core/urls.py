@@ -18,10 +18,12 @@ urlpatterns = [
     path("api/",include("apps.producto.urls")),
     path("api/",include("apps.inventario.urls")),
     path("api/",include("apps.venta.urls")),
-    path("api/",include("apps.external.urls")),
+    
     path("api/",include("apps.comprobante.urls")),
     path("api/",include("apps.caja.urls")),
 ]
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

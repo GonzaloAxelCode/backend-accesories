@@ -59,7 +59,7 @@ INSTALLED_APPS = [
                     "apps.proveedor",
                     "apps.tienda",
                     "apps.venta",
-                    "apps.external",
+                    
                     "apps.comprobante",
                     "apps.caja",
                     "apps.compras",
@@ -226,6 +226,7 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'statics')
 ]
+
 
 SITE_DOMAIN = os.environ.get("SITE_DOMAIN")
 DOMAIN = os.environ.get('DOMAIN')

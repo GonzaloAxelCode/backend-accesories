@@ -11,6 +11,8 @@ class Producto(models.Model):
     categoria = models.ForeignKey(Categoria, on_delete=models.SET_NULL, null=True)
     '''categoria_nombre = models.CharField(max_length=100, blank=True, null=True)'''
     sku = models.CharField(max_length=50, unique=True, blank=True)
+    imagen = models.ImageField(upload_to='productos/', default='productos/default.jpg', null=True, blank=True)
+
     marca = models.CharField(max_length=100, blank=True, null=True)
     modelo = models.CharField(max_length=100, blank=True, null=True)
     caracteristicas = models.JSONField(default=dict) 
@@ -21,12 +23,31 @@ class Producto(models.Model):
     date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)     
     def save(self, *args, **kwargs):
         if not self.sku and self.categoria:
-            siglas = self.categoria.siglas_nombre_categoria.upper()  # type: ignore # Obtiene las siglas
-            ultimo_producto = Producto.objects.filter(categoria=self.categoria).order_by('-id').first()
-            nuevo_numero = int(ultimo_producto.sku.split('-')[1]) + 1 if ultimo_producto else 1
-            self.sku = f"{siglas}-{nuevo_numero:06d}" 
-        
+
+            # Obtener siglas y limitar a 4 letras
+            siglas = self.categoria.siglas_nombre_categoria.upper()[:4] # type: ignore
+            siglas = siglas.ljust(4, 'X')  # Rellena con X si tiene menos de 4 letras
+
+            # Buscar el último producto de la categoría
+            ultimo_producto = Producto.objects.filter(
+                categoria=self.categoria
+            ).order_by('-id').first()
+
+            # Obtener correlativo
+            if ultimo_producto:
+                try:
+                    ultimo_numero = int(ultimo_producto.sku.split('-')[1])
+                except:
+                    ultimo_numero = 0
+                nuevo_numero = ultimo_numero + 1
+            else:
+                nuevo_numero = 1
+
+            # Formar SKU: ABCD-0001
+            self.sku = f"{siglas}-{nuevo_numero:04d}"
+
         super().save(*args, **kwargs)
+    
 
     def __str__(self):
         return self.nombre
