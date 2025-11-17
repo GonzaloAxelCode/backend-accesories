@@ -234,7 +234,7 @@ class RegistrarVentaView(APIView):
                         "leyenda": leyenda,
                         "cliente": {
                             "tipoDoc": "6" if data["tipoComprobante"] == "Factura" else "1",
-                             "numDoc": cliente_data["ruc"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
+                             "numDoc": cliente_data["numero"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
                              "nombre": cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"]
                         },
                         "items":productos_items_for_sunat

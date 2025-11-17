@@ -10,8 +10,8 @@ class Producto(models.Model):
     descripcion = models.TextField(blank=True, null=True)
     categoria = models.ForeignKey(Categoria, on_delete=models.SET_NULL, null=True)
     '''categoria_nombre = models.CharField(max_length=100, blank=True, null=True)'''
-    sku = models.CharField(max_length=50, unique=True, blank=True)
-    imagen = models.ImageField(upload_to='productos/', default='productos/default.jpg', null=True, blank=True)
+    sku = models.CharField(max_length=50, blank=True)
+    imagen = models.ImageField(upload_to='productos/', default=None, null=True, blank=True)
 
     marca = models.CharField(max_length=100, blank=True, null=True)
     modelo = models.CharField(max_length=100, blank=True, null=True)

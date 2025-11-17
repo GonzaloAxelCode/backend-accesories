@@ -167,17 +167,20 @@ class GetProductoAPIView(APIView):
         tienda = getattr(request.user, "tienda", None)
         producto = get_object_or_404(Producto, id=id, tienda=tienda,activo=True)
         serializer = ProductoSerializer(producto)
+        
         return Response(serializer.data, status=status.HTTP_200_OK)
 class CreateProductoAPIView(APIView):
     permission_classes = [IsAuthenticated, CanCreateProductPermission]
-    parser_classes = [MultiPartParser, FormParser]  # <- Permite subir archivos
+    parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
         data = request.data
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
-            return Response({"error": "El usuario no tiene una tienda asignada."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         # Verificar duplicados
         if Producto.objects.filter(tienda=tienda, nombre=data.get("nombre")).exists():
@@ -186,22 +189,33 @@ class CreateProductoAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if Producto.objects.filter(tienda=tienda, descripcion=data.get("descripcion")).exists():
-            return Response(
-                {"error": "Ya existe un producto con esa descripción en tu tienda."},
-                status=status.HTTP_400_BAD_REQUEST
+        serializer = ProductoSerializer(data=data)
+
+        if serializer.is_valid():
+            # Crear el producto
+            producto = serializer.save(tienda=tienda, activo=True)
+
+            # Crear inventario automático
+            Inventario.objects.create(
+                responsable=request.user,
+                producto=producto,
+                tienda=tienda,
+                descripcion="Descripción",
+                cantidad=1,
+                stock_minimo=1,
+                stock_maximo=500,
+                costo_compra=0.00,
+                costo_venta=0.00,
+                costo=0.00,
+                estado="Disponible",
             )
 
-        serializer = ProductoSerializer(data=data)
-        if serializer.is_valid():
-            serializer.save(tienda=tienda,activo=True)
             return Response({
-                "message": "Producto creado exitosamente",
+                "message": "Producto e inventario creado exitosamente",
                 "producto": serializer.data
             }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 class UpdateProductoAPIView(APIView):
     permission_classes = [IsAuthenticated, CanUpdateProductPermission]
@@ -229,6 +243,7 @@ class DeleteProductoAPIView(APIView):
         producto.activo = False
         producto.categoria = None
         producto.nombre = f"{producto.nombre}(Delete)"
+        
         producto.save()
         Inventario.objects.filter(producto=producto, tienda=tienda).update(activo=False)
  
