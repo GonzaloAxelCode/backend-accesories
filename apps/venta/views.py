@@ -123,7 +123,7 @@ class RegistrarVentaView(APIView):
                     fecha_hora=fecha_hora_aware,
                     
                          tipo_documento_cliente = "6" if data["tipoComprobante"] == "Factura" else "1",
-                             numero_documento_cliente=cliente_data["ruc"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
+                             numero_documento_cliente=cliente_data["numero"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
                              nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"],
                              email_cliente  =  data.get("correo_cliente") if data.get("correo_cliente") else None,
                              telefono_cliente   =  data.get("telefono_cliente") if data.get("telefono_cliente") else None,
@@ -264,7 +264,7 @@ class RegistrarVentaView(APIView):
 
                     
                  
-                    document = cliente_data["ruc"] if data["tipoComprobante"] == "Factura" else cliente_data["numero"]
+                    document = cliente_data["numero"] if data["tipoComprobante"] == "Factura" else cliente_data["numero"]
                     nombre_cliente = cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"]
                     email_cliente = data.get("correo_cliente")
                     telefono_cliente = data.get("telefono_cliente")
@@ -404,7 +404,7 @@ class RegistrarVentaSinComprobanteView(APIView):
                     fecha_hora=fecha_hora_aware,
                     estado="Pendiente",  
                     tipo_documento_cliente = "6" if data["tipoComprobante"] == "Factura" else "1",
-                             numero_documento_cliente=cliente_data["ruc"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
+                             numero_documento_cliente=cliente_data["numero"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
                              nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"],
                        email_cliente  =  data.get("correo_cliente") if data.get("correo_cliente") else None,
                              telefono_cliente   =  data.get("telefono_cliente") if data.get("telefono_cliente") else None,
@@ -491,7 +491,7 @@ class RegistrarVentaSinComprobanteView(APIView):
                     "comprobante_data":None ,                
                     "comprobante": None ,
                      "tipo_documento_cliente": venta.tipo_documento_cliente,
-                             "numero_documento_cliente": cliente_data["ruc"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
+                             "numero_documento_cliente": cliente_data["numero"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
                              "nombre_cliente": cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"],
                        "email_cliente": data.get("correo_cliente") if data.get("correo_cliente") else None,
                              "telefono_cliente": data.get("telefono_cliente") if data.get("telefono_cliente") else None,
