@@ -87,7 +87,7 @@ class GetAllInventarioAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        qs = Inventario.objects.filter(tienda=tienda)
+        qs = Inventario.objects.filter(tienda=tienda,activo=True)
         
         
         serializer = InventarioSerializer(qs, many=True)    
