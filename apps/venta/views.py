@@ -503,18 +503,18 @@ class RegistrarVentaSinComprobanteView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-
 class RegistrarVentaAnonimaView(APIView):
-    permission_classes = [IsAuthenticated,CanMakeSalePermission]
+    permission_classes = [IsAuthenticated, CanMakeSalePermission]
+    
     def post(self, request):
         try:
             data = request.data
 
-            # Validar que los datos obligatorios existan
+            # Validar datos obligatorios
             if not all(k in data for k in ["usuarioId", "metodoPago", "tipoComprobante", "productos"]):
                 return Response({"error": "Faltan datos obligatorios"}, status=status.HTTP_400_BAD_REQUEST)
 
-            is_send_sunat = data.get("is_send_sunat", True)  # Por defecto true
+            is_send_sunat = data.get("is_send_sunat", True)  # Por defecto True
 
             def obtener_siguiente_serie_y_correlativoAnonimo():
                 serie_base = "B001"
@@ -549,9 +549,10 @@ class RegistrarVentaAnonimaView(APIView):
                     metodo_pago=data["metodoPago"],
                     tipo_comprobante="Boleta",
                     fecha_hora=fecha_hora_aware,
+                    estado="Pendiente" if not is_send_sunat else "Registrada",  # Pendiente si no se envía a SUNAT
                     tipo_documento_cliente="1",
                     numero_documento_cliente="00000000",
-                    nombre_cliente="CONSUMIDOR FINAL"  # Ajustado para varchar(10),
+                    nombre_cliente="CONSUMIDOR FINAL"
                 )
 
                 subtotal = Decimal(0)
@@ -573,7 +574,7 @@ class RegistrarVentaAnonimaView(APIView):
                     igv = valor_venta * (porcentaje_igv / Decimal("100.00"))
                     total_impuestos = igv
 
-                    venta_producto = VentaProducto.objects.create(
+                    VentaProducto.objects.create(
                         venta=venta,
                         producto=producto,
                         cantidad=cantidad,
@@ -605,20 +606,22 @@ class RegistrarVentaAnonimaView(APIView):
                         "precio_unitario": float(precio_unitario),
                     })
 
-                    productos_items_for_sunat.append({
-                        "codigo": producto.sku,
-                        "unidad": "NIU",
-                        "descripcion": producto.nombre,
-                        "cantidad": cantidad,
-                        "valorUnitario": round(float(valor_unitario), 2),
-                        "valorVenta": round(float(valor_venta), 2),
-                        "baseIgv": round(float(valor_venta), 2),
-                        "porcentajeIgv": 18,
-                        "igv": round(float(valor_venta * (porcentaje_igv / 100)), 2),
-                        "tipoAfectacionIgv": "10",
-                        "totalImpuestos": round(float(valor_venta * (porcentaje_igv / 100)), 2),
-                        "precioUnitario": round(float(precio_unitario), 2),
-                    })
+                    # Solo preparar items para SUNAT si se va a enviar
+                    if is_send_sunat:
+                        productos_items_for_sunat.append({
+                            "codigo": producto.sku,
+                            "unidad": "NIU",
+                            "descripcion": producto.nombre,
+                            "cantidad": cantidad,
+                            "valorUnitario": round(float(valor_unitario), 2),
+                            "valorVenta": round(float(valor_venta), 2),
+                            "baseIgv": round(float(valor_venta), 2),
+                            "porcentajeIgv": 18,
+                            "igv": round(float(valor_venta * (porcentaje_igv / 100)), 2),
+                            "tipoAfectacionIgv": "10",
+                            "totalImpuestos": round(float(valor_venta * (porcentaje_igv / 100)), 2),
+                            "precioUnitario": round(float(precio_unitario), 2),
+                        })
 
                 venta.subtotal = subtotal
                 venta.gravado_total = gravado_total
@@ -627,30 +630,34 @@ class RegistrarVentaAnonimaView(APIView):
                 venta.productos_json = productos_registrados
                 venta.save()
 
-                # Generar serie y correlativo
-                serie_generada, correlativo_generado = obtener_siguiente_serie_y_correlativoAnonimo()
+                comprobante_data = None
+                comprobante_json = None
 
-                comprobante_data = {
-                    "serie": serie_generada,
-                    "correlativo": correlativo_generado,
-                    "moneda": "PEN",
-                    "gravadas": float(gravado_total),
-                    "exoneradas": float(exonerado_total),
-                    "igv": float(igv_total),
-                    "valorVenta": float(subtotal),
-                    "subTotal": float(subtotal + igv_total),
-                    "total": float(total),
-                    "leyenda": f"SON {num2words(total, lang='es').upper()} CON 00/100 SOLES",
-                    "cliente": {
-                        "tipoDoc": "01",
-                        "numDoc": "00000000",
-                        "nombre": "CONSUMIDOR FINAL"
-                    },
-                    "items": productos_items_for_sunat
-                }
-
-                # Solo enviar a SUNAT si is_send_sunat es True
+                # Solo generar y enviar comprobante si is_send_sunat es True
                 if is_send_sunat:
+                    # Generar serie y correlativo
+                    serie_generada, correlativo_generado = obtener_siguiente_serie_y_correlativoAnonimo()
+
+                    comprobante_data = {
+                        "serie": serie_generada,
+                        "correlativo": correlativo_generado,
+                        "moneda": "PEN",
+                        "gravadas": float(gravado_total),
+                        "exoneradas": float(exonerado_total),
+                        "igv": float(igv_total),
+                        "valorVenta": float(subtotal),
+                        "subTotal": float(subtotal + igv_total),
+                        "total": float(total),
+                        "leyenda": f"SON {num2words(total, lang='es').upper()} CON 00/100 SOLES",
+                        "cliente": {
+                            "tipoDoc": "01",
+                            "numDoc": "00000000",
+                            "nombre": "CONSUMIDOR FINAL"
+                        },
+                        "items": productos_items_for_sunat
+                    }
+
+                    # Enviar a SUNAT
                     php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php"
                     headers = {"Content-Type": "application/json"}
                     response = requests.post(php_backend_url_boleta, json=comprobante_data, headers=headers)
@@ -665,35 +672,33 @@ class RegistrarVentaAnonimaView(APIView):
                     pdf_url = response_json.get("pdf_url")
                     cdr_url = response_json.get("cdr_url")
                     ticket_url = response_json.get("ticket_url")
-                else:
-                    estado_sunat = "Pendiente"
-                    xml_url = pdf_url = cdr_url = ticket_url = None
 
-                # Guardar comprobante
-                new_comprobante = ComprobanteElectronico.objects.create(
-                    venta=venta,
-                    tipo_comprobante="03",
-                    serie=serie_generada,
-                    correlativo=correlativo_generado,
-                    moneda="PEN",
-                    gravadas=Decimal(comprobante_data["gravadas"]),
-                    igv=Decimal(comprobante_data["igv"]),
-                    valorVenta=Decimal(comprobante_data["valorVenta"]),
-                    sub_total=Decimal(comprobante_data["subTotal"]),
-                    total=Decimal(comprobante_data["total"]),
-                    leyenda=comprobante_data["leyenda"],
-                    tipo_documento_cliente=comprobante_data["cliente"]["tipoDoc"],
-                    numero_documento_cliente=comprobante_data["cliente"]["numDoc"],
-                    nombre_cliente=comprobante_data["cliente"]["nombre"],
-                    estado_sunat=estado_sunat,
-                    xml_url=xml_url,
-                    pdf_url=pdf_url,
-                    cdr_url=cdr_url,
-                    ticket_url=ticket_url,
-                    items=comprobante_data["items"]
-                )
-                new_comprobante.save()
-                comprobante_json = {
+                    # Guardar comprobante
+                    new_comprobante = ComprobanteElectronico.objects.create(
+                        venta=venta,
+                        tipo_comprobante="03",
+                        serie=serie_generada,
+                        correlativo=correlativo_generado,
+                        moneda="PEN",
+                        gravadas=Decimal(comprobante_data["gravadas"]),
+                        igv=Decimal(comprobante_data["igv"]),
+                        valorVenta=Decimal(comprobante_data["valorVenta"]),
+                        sub_total=Decimal(comprobante_data["subTotal"]),
+                        total=Decimal(comprobante_data["total"]),
+                        leyenda=comprobante_data["leyenda"],
+                        tipo_documento_cliente=comprobante_data["cliente"]["tipoDoc"],
+                        numero_documento_cliente=comprobante_data["cliente"]["numDoc"],
+                        nombre_cliente=comprobante_data["cliente"]["nombre"],
+                        estado_sunat=estado_sunat,
+                        xml_url=xml_url,
+                        pdf_url=pdf_url,
+                        cdr_url=cdr_url,
+                        ticket_url=ticket_url,
+                        items=comprobante_data["items"]
+                    )
+                    new_comprobante.save()
+
+                    comprobante_json = {
                         "tipo_comprobante": new_comprobante.tipo_comprobante,
                         "serie": new_comprobante.serie,
                         "correlativo": new_comprobante.correlativo,
@@ -714,25 +719,32 @@ class RegistrarVentaAnonimaView(APIView):
                         "ticket_url": new_comprobante.ticket_url,
                         "items": new_comprobante.items
                     }
+
+                    venta.estado = "Registrada"
+                    venta.save()
+
+                # Construir respuesta
                 venta_json = {
-                      "id": venta.id, # type: ignore
-                        "usuario":  usuario.id, # type: ignore
-                        "tienda": tienda.id, # type: ignore
-                        "metodo_pago": venta.metodo_pago,
-                        "tipo_comprobante": venta.tipo_comprobante,
-                        "metodo_pago" :venta.metodo_pago,
-                        "estado" :venta.estado,
-                        "activo" :venta.activo,
-                        "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
-                        "fecha_realizacion" :venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
-                        "subtotal": float(subtotal),
-                        "gravado_total": float(gravado_total),
-                        "igv_total": float(igv_total),
-                        "total": float(total),
-                        "productos_json": json.dumps(productos_registrados),
-                        "productos": productos_registrados,
-                        "comprobante_data":comprobante_data ,                
-                        "comprobante": comprobante_json   
+                    "id": venta.id, # type: ignore
+                    "usuario": usuario.id,
+                    "tienda": tienda.id,
+                    "metodo_pago": venta.metodo_pago,
+                    "tipo_comprobante": venta.tipo_comprobante,
+                    "estado": venta.estado,
+                    "activo": venta.activo,
+                    "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
+                    "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
+                    "subtotal": float(subtotal),
+                    "gravado_total": float(gravado_total),
+                    "igv_total": float(igv_total),
+                    "total": float(total),
+                    "productos_json": json.dumps(productos_registrados),
+                    "productos": productos_registrados,
+                    "comprobante_data": comprobante_data,
+                    "comprobante": comprobante_json,
+                    "tipo_documento_cliente": venta.tipo_documento_cliente,
+                    "numero_documento_cliente": venta.numero_documento_cliente,
+                    "nombre_cliente": venta.nombre_cliente
                 }
 
                 return Response(venta_json, status=status.HTTP_201_CREATED)
