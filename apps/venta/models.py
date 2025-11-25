@@ -47,6 +47,8 @@ class VentaProducto(models.Model):
     tipo_afectacion_igv = models.CharField(max_length=10)  # Código de afectación (Ej: "10" para gravado)
     total_impuestos = models.DecimalField(max_digits=10, decimal_places=2)  # Total de impuestos
     precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)  # Precio final (con IGV)
+    costo_original= models.DecimalField(max_digits=10, decimal_places=2,default=0) # type: ignore
+    descuento=models.DecimalField(max_digits=10, decimal_places=2,default=0) # type: ignore
     date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     class Meta:
         ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)

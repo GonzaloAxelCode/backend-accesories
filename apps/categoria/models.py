@@ -19,7 +19,9 @@ class Categoria(models.Model):
     tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE, related_name='categorias',null=True, blank=True) # type: ignore
     color = models.CharField(max_length=50, blank=True,null=True)
     siglas_nombre_categoria = models.CharField(max_length=10, blank=True,null=True)
-    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    caracteristicas_template = models.JSONField(default=list, blank=True)
+
     def __str__(self):
         return self.nombre
     class Meta:

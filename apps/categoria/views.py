@@ -15,15 +15,22 @@ from .models import Categoria
 
 # Crear una nueva categoria
 class CreateCategoria(APIView):
-    permission_classes = [IsAuthenticated,CanCreateCategoryPermission]
+    permission_classes = [IsAuthenticated, CanCreateCategoryPermission]
 
     def post(self, request):
-        data = request.data
+        data = request.data.copy()
+
+        # Si no viene `caracteristicas_template`, lo forzamos a lista vacía
+        if "caracteristicas_template" not in data:
+            data["caracteristicas_template"] = []
+
         tienda = request.user.tienda
-        serializer = CategoriaSerializer(data=request.data)
+
+        serializer = CategoriaSerializer(data=data)
         if serializer.is_valid():
             serializer.save(tienda=tienda)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # Obtener todas las categorias

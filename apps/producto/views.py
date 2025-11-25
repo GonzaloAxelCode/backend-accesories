@@ -1,3 +1,4 @@
+import json
 from math import ceil, prod
 from django.shortcuts import get_object_or_404
 from rest_framework import status
@@ -169,33 +170,45 @@ class GetProductoAPIView(APIView):
         serializer = ProductoSerializer(producto)
         
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
 class CreateProductoAPIView(APIView):
     permission_classes = [IsAuthenticated, CanCreateProductPermission]
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
-        data = request.data
+        data = request.data.copy()
+
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
-            return Response(
-                {"error": "El usuario no tiene una tienda asignada."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "Usuario sin tienda asignada"}, status=400)
 
-        # Verificar duplicados
-        if Producto.objects.filter(tienda=tienda, nombre=data.get("nombre")).exists():
-            return Response(
-                {"error": "Ya existe un producto con ese nombre en tu tienda."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # -------------------------------
+        # Convertir caracteristicas JSON string → dict
+        # -------------------------------
+        caracteristicas_raw = data.get("caracteristicas")
 
+        if caracteristicas_raw:
+            try:
+                data["caracteristicas"] = json.loads(caracteristicas_raw)
+            except Exception:
+                return Response(
+                    {"caracteristicas": ["El valor debe ser JSON válido."]},
+                    status=400
+                )
+        else:
+            data["caracteristicas"] = {}
+
+        # ⚠️ Aquí está la solución clave
+        data = data.dict()
+
+        # -------------------------------
+        # Serializar
+        # -------------------------------
         serializer = ProductoSerializer(data=data)
 
         if serializer.is_valid():
-            # Crear el producto
             producto = serializer.save(tienda=tienda, activo=True)
 
-            # Crear inventario automático
             Inventario.objects.create(
                 responsable=request.user,
                 producto=producto,
@@ -207,32 +220,63 @@ class CreateProductoAPIView(APIView):
                 costo_compra=0.00,
                 costo_venta=0.00,
                 costo=0.00,
-                estado="Disponible",
+                estado="Disponible"
             )
 
             return Response({
                 "message": "Producto e inventario creado exitosamente",
                 "producto": serializer.data
-            }, status=status.HTTP_201_CREATED)
+            }, status=201)
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=400)
+
+
 
 class UpdateProductoAPIView(APIView):
     permission_classes = [IsAuthenticated, CanUpdateProductPermission]
-    parser_classes = [MultiPartParser, FormParser, JSONParser]  # 👈 Agregar parsers para manejar archivos
-    
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
     def put(self, request, id):
         tienda = getattr(request.user, "tienda", None)
         producto = get_object_or_404(Producto, id=id, tienda=tienda)
 
-        serializer = ProductoSerializer(producto, data=request.data, partial=True)
+        data = request.data.copy()
+
+        # ------------------------------------
+        # Convertir JSON string → dict (OBLIGATORIO)
+        # ------------------------------------
+        caracteristicas_raw = data.get("caracteristicas")
+
+        if caracteristicas_raw is not None:
+            try:
+                data["caracteristicas"] = json.loads(caracteristicas_raw)
+            except Exception:
+                return Response(
+                    {"caracteristicas": ["El valor debe ser JSON válido."]},
+                    status=400
+                )
+
+        # Convertir QueryDict a dict normal
+        data = data.dict()
+
+        # ------------------------------------
+        # Serializar actualización completa o parcial
+        # ------------------------------------
+        serializer = ProductoSerializer(producto, data=data, partial=True)
+
         if serializer.is_valid():
             serializer.save()
-            return Response({
-                "message": "Producto actualizado exitosamente",
-                "producto": serializer.data
-            }, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "message": "Producto actualizado exitosamente",
+                    "producto": serializer.data
+                },
+                status=200
+            )
+
+        return Response(serializer.errors, status=400)
+
+
 
 # ---------- ELIMINAR PRODUCTO ----------
 class DeleteProductoAPIView(APIView):
