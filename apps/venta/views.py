@@ -320,6 +320,7 @@ class RegistrarVentaView(APIView):
                             cdr_url=response_json.get("cdr_url"), # type: ignore
                             ticket_url=response_json.get("ticket_url"), # type: ignore
                             items=comprobante_data["items"]
+                            
                         )
                     new_comprobante.save()
                     venta.save()
