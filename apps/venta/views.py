@@ -1,7 +1,6 @@
 from ast import Is
 from collections import Counter
 from datetime import timedelta
-from pydoc import describe
 from django.utils.dateparse import parse_date
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -145,9 +144,8 @@ class RegistrarVentaView(APIView):
                     producto = inventario.producto  # Obtener el producto asociado
                     cantidad = int(item["cantidad_final"])
                     descuento = int(item["descuento"])
-
-                    # Obtener el precio con IGV desde inventario
-                    precio_unitario = Decimal(inventario.costo_venta)  # type: ignore # Precio de venta final con IGV
+                    # Obtener el precio con IGV desde inventario y con descuento pero sin que sunat se entere 
+                    precio_unitario = Decimal(inventario.costo_venta)  - Decimal(descuento)  # type: ignore # Precio de venta final con IGV
                     porcentaje_igv = Decimal("18.00")  # ✅ Define el porcentaje como Decimal
 
                     # Calcular el valor unitario sin IGV
@@ -155,8 +153,7 @@ class RegistrarVentaView(APIView):
 
                     # Calcular valores finales
                     valor_venta = cantidad * valor_unitario
-                    valor_venta_with_descuento = cantidad * valor_unitario - descuento
-                    igv = valor_venta_with_descuento * (porcentaje_igv / Decimal("100.00"))
+                    igv = valor_venta * (porcentaje_igv / Decimal("100.00"))
                     total_impuestos = igv
                     
                     # Crear y guardar VentaProducto en la BD
@@ -165,15 +162,14 @@ class RegistrarVentaView(APIView):
                         producto=producto,
                         cantidad=cantidad,
                         valor_unitario=valor_unitario,
-                        valor_venta=valor_venta_with_descuento,
-                        costo_original=valor_venta,
-                        base_igv=valor_venta_with_descuento,
+                        valor_venta=valor_venta,
+                        base_igv=valor_venta,
                         porcentaje_igv=porcentaje_igv,
                         igv=igv,
                         tipo_afectacion_igv="10",  # Código de afectación IGV estándar
                         total_impuestos=total_impuestos,
-                        precio_unitario=precio_unitario,
-                        descuento=descuento
+                        precio_unitario=precio_unitario, 
+                        descuento=int(item["descuento"])
                         
                         
                     )
