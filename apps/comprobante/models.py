@@ -35,6 +35,10 @@ class ComprobanteElectronico(models.Model):
     items = models.JSONField(default=list)
 
     date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
+    #extra
+    descuento_total = models.DecimalField(default=0,blank=True,max_digits=10, decimal_places=2,) # type: ignore
+    
+        
     def __str__(self):
         return f"{self.tipo_comprobante} {self.serie}-{self.correlativo}"
     class Meta:

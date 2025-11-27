@@ -145,7 +145,8 @@ class RegistrarVentaView(APIView):
                     cantidad = int(item["cantidad_final"])
                     descuento = int(item["descuento"])
                     # Obtener el precio con IGV desde inventario y con descuento pero sin que sunat se entere 
-                    precio_unitario = Decimal(inventario.costo_venta)  - Decimal(descuento)  # type: ignore # Precio de venta final con IGV
+                    precio_unitario = Decimal(inventario.costo_venta)  - Decimal(descuento/int(item["cantidad_final"]))  # type: ignore # Precio de venta final con IGV
+                    precio_unitario_original = Decimal(inventario.costo_venta)   # type: ignore # Precio de venta final con IGV
                     porcentaje_igv = Decimal("18.00")  # ✅ Define el porcentaje como Decimal
 
                     # Calcular el valor unitario sin IGV
@@ -190,8 +191,9 @@ class RegistrarVentaView(APIView):
                         "valor_unitario": float(valor_unitario),  # Sin IGV
                         "valor_venta": float(valor_venta),
                         "igv": float(igv),
-                        "precio_unitario": float(precio_unitario)  # Con IGV,
-                        
+                        "precio_unitario": float(precio_unitario) , # Con IGV,
+                        "costo_original": float(precio_unitario_original),  # Con IGV,
+                            "descuento":round(float(descuento),2)      
                     })
                     productos_items_for_sunat.append({
                               "codigo": producto.sku,
@@ -206,6 +208,8 @@ class RegistrarVentaView(APIView):
                             "tipoAfectacionIgv": "10",
                             "totalImpuestos": round(float(valor_venta * (porcentaje_igv / 100)), 2),  # ✅ CORRECCIÓN
                             "precioUnitario": round(float(precio_unitario), 2),
+                            "costo_original":round(float(precio_unitario_original),2),
+                            "descuento":round(float(descuento),2)
                     }) 
                     venta.subtotal = subtotal
                     venta.gravado_total = gravado_total

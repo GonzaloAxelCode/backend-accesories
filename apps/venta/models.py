@@ -24,6 +24,7 @@ class Venta(models.Model):
     gravado_total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00,null=True) # type: ignore
     igv_total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00,null=True) # type: ignore
     productos_json = models.JSONField(default=list, blank=True)  # Compatible con PostgreSQL y SQLite en Django 3.1+
+    descuento_total= models.DecimalField(default=0,blank=True,max_digits=10, decimal_places=2,) # type: ignore
        # Datos del cliente
     tipo_documento_cliente = models.CharField(max_length=2, null=True)  # Ejemplo: 1 (DNI)
     numero_documento_cliente = models.CharField(max_length=15, null=True)
