@@ -170,8 +170,8 @@ class RegistrarVentaView(APIView):
                         tipo_afectacion_igv="10",  # Código de afectación IGV estándar
                         total_impuestos=total_impuestos,
                         precio_unitario=precio_unitario, 
-                        descuento=int(item["descuento"])
-                        
+                        descuento=int(item["descuento"]),
+                        costo_original =round(float(precio_unitario_original),2), 
                         
                     )
                     venta_producto.save()
@@ -193,7 +193,7 @@ class RegistrarVentaView(APIView):
                         "igv": float(igv),
                         "precio_unitario": float(precio_unitario) , # Con IGV,
                         "costo_original": float(precio_unitario_original),  # Con IGV,
-                            "descuento":round(float(descuento),2)      
+                        "descuento":round(float(descuento),2)      
                     })
                     productos_items_for_sunat.append({
                               "codigo": producto.sku,
@@ -429,8 +429,9 @@ class RegistrarVentaSinComprobanteView(APIView):
                     inventario = get_object_or_404(Inventario, id=item["inventarioId"])
                     producto = inventario.producto
                     cantidad = int(item["cantidad_final"])
-
-                    precio_unitario = Decimal(inventario.costo_venta)  # type: ignore # con IGV
+                    descuento = int(item["descuento"])
+                    precio_unitario_original = Decimal(inventario.costo_venta)   # type: ignore # Precio de venta final con IGV
+                    precio_unitario = Decimal(inventario.costo_venta)  - Decimal(descuento/int(item["cantidad_final"]))  # type: ignore
                     porcentaje_igv = Decimal("18.00")
                     valor_unitario = precio_unitario / (Decimal("1.00") + (porcentaje_igv / Decimal("100.00")))
                     valor_venta = cantidad * valor_unitario
@@ -449,8 +450,10 @@ class RegistrarVentaSinComprobanteView(APIView):
                         igv=igv,
                         tipo_afectacion_igv="10",
                         total_impuestos=total_impuestos,
-                        precio_unitario=precio_unitario
-                     
+                        precio_unitario=precio_unitario,
+                       descuento=int(item["descuento"]),
+                       
+                        costo_original=round(float(precio_unitario_original),2),
                     )
 
                     inventario.cantidad -= cantidad
@@ -573,7 +576,9 @@ class RegistrarVentaAnonimaView(APIView):
                     inventario = get_object_or_404(Inventario, id=item["inventarioId"])
                     producto = inventario.producto
                     cantidad = int(item["cantidad_final"])
-                    precio_unitario = Decimal(inventario.costo_venta) # type: ignore
+                    descuento = int(item["descuento"])
+                    precio_unitario_original = Decimal(inventario.costo_venta)   # type: ignore # Precio de venta final con IGV
+                    precio_unitario = Decimal(inventario.costo_venta)  - Decimal(descuento/int(item["cantidad_final"]))  # type: ignore
                     porcentaje_igv = Decimal("18.00")
                     valor_unitario = precio_unitario / (Decimal("1.00") + (porcentaje_igv / Decimal("100.00")))
                     valor_venta = cantidad * valor_unitario
@@ -592,6 +597,8 @@ class RegistrarVentaAnonimaView(APIView):
                         tipo_afectacion_igv="10",
                         total_impuestos=total_impuestos,
                         precio_unitario=precio_unitario,
+                        descuento=int(item["descuento"]),
+                                          costo_original=round(float(precio_unitario_original),2),
                     )
 
                     inventario.cantidad -= cantidad
@@ -610,6 +617,8 @@ class RegistrarVentaAnonimaView(APIView):
                         "valor_venta": float(valor_venta),
                         "igv": float(igv),
                         "precio_unitario": float(precio_unitario),
+                          "costo_original": float(precio_unitario_original),  # Con IGV,
+                            "descuento":round(float(descuento),2)  
                     })
 
                     # Solo preparar items para SUNAT si se va a enviar
@@ -627,6 +636,8 @@ class RegistrarVentaAnonimaView(APIView):
                             "tipoAfectacionIgv": "10",
                             "totalImpuestos": round(float(valor_venta * (porcentaje_igv / 100)), 2),
                             "precioUnitario": round(float(precio_unitario), 2),
+                              "costo_original": float(precio_unitario_original),  # Con IGV,
+                            "descuento":round(float(descuento),2)      
                         })
 
                 venta.subtotal = subtotal
@@ -1385,6 +1396,7 @@ class GenerarComprobanteVentaView(APIView):
                 porcentaje_igv = Decimal("18.00")
                 
                 for vp in venta_productos:
+                    
                     productos_items_for_sunat.append({
                         "codigo": vp.producto.sku, # type: ignore
                         "unidad": "NIU",
@@ -1398,6 +1410,8 @@ class GenerarComprobanteVentaView(APIView):
                         "tipoAfectacionIgv": "10",
                         "totalImpuestos": round(float(vp.total_impuestos), 2),
                         "precioUnitario": round(float(vp.precio_unitario), 2),
+                          "costo_original": float(vp.costo_original),  # Con IGV, # type: ignore
+                            "descuento":round(float(vp.descuento),2)      
                     })
                 
                 # Generar leyenda
