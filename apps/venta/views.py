@@ -67,24 +67,42 @@ class RegistrarVentaView(APIView):
             # Validar que los datos obligatorios existan
             if not all(k in data for k in ["usuarioId", "metodoPago", "tipoComprobante", "productos"]):
                 return Response({"error": "Faltan datos obligatorios"}, status=status.HTTP_400_BAD_REQUEST)
-            def obtener_siguiente_serie_y_correlativo(tipo_comprobante):
+            def obtener_siguiente_serie_y_correlativo(
+                tipo_comprobante: str,
+                correlativo_inicial_f: int = 2,
+                correlativo_inicial_b: int = 1
+            ):
                 """
-                Busca en la base de datos la última serie y correlativo según el tipo de comprobante.
-                Si no hay comprobantes previos, inicia con 'F001' para facturas y 'B001' para boletas.
+                Retorna la serie y el correlativo siguiente para facturas o boletas.
+                Si no existen comprobantes previos, empieza desde:
+                - correlativo_inicial_f para FACTURA (F001)
+                - correlativo_inicial_b para BOLETA (B001)
                 """
-                if tipo_comprobante.lower() == "factura":
+
+                tipo = tipo_comprobante.lower()
+
+                # --- Selección de serie base ---
+                if tipo == "factura":
                     serie_base = "F001"
+                    correlativo_inicial = correlativo_inicial_f
                 else:
                     serie_base = "B001"
+                    correlativo_inicial = correlativo_inicial_b
 
-                # Buscar el último comprobante con esa serie
-                ultimo_comprobante = ComprobanteElectronico.objects.filter(serie__startswith=serie_base).order_by('-serie', '-correlativo').first()
+                # --- Buscar último comprobante existente ---
+                ultimo = (
+                    ComprobanteElectronico.objects
+                    .filter(serie__startswith=serie_base)
+                    .order_by('-serie', '-correlativo')
+                    .first()
+                )
 
-                if ultimo_comprobante:
-                    serie_actual = ultimo_comprobante.serie
-                    correlativo_actual = int(ultimo_comprobante.correlativo) # type: ignore
+                # --- Si hay uno previo: continuar numeración ---
+                if ultimo:
+                    serie_actual = ultimo.serie
+                    correlativo_actual = int(ultimo.correlativo) # type: ignore
 
-                    # Si el correlativo llega a 99999999, pasamos a la siguiente serie (F002, B002, etc.)
+                    # Si se llega al límite → saltar de serie
                     if correlativo_actual >= 99999999:
                         nueva_serie = f"{serie_base[0]}{str(int(serie_actual[1:]) + 1).zfill(3)}" # type: ignore
                         nuevo_correlativo = "00000001"
@@ -92,12 +110,14 @@ class RegistrarVentaView(APIView):
                         nueva_serie = serie_actual
                         nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
 
+                # --- Si NO hay comprobantes: iniciar desde el correlativo solicitado ---
                 else:
-                    # Si no hay comprobantes previos, iniciamos desde cero
                     nueva_serie = serie_base
-                    nuevo_correlativo = "00000001"
+                    nuevo_correlativo = str(correlativo_inicial).zfill(8)
 
                 return nueva_serie, nuevo_correlativo
+            
+
 
             # Buscar la tienda y el usuario por ID
             tienda = request.user.tienda
@@ -558,7 +578,7 @@ class RegistrarVentaAnonimaView(APIView):
                     metodo_pago=data["metodoPago"],
                     tipo_comprobante="Boleta",
                     fecha_hora=fecha_hora_aware,
-                    estado="Pendiente" if not is_send_sunat else "Registrada",  # Pendiente si no se envía a SUNAT
+                    estado="Pendiente" if not is_send_sunat else "Completada",  # Pendiente si no se envía a SUNAT
                     tipo_documento_cliente="1",
                     numero_documento_cliente="00000000",
                     nombre_cliente="CONSUMIDOR FINAL"
@@ -737,7 +757,7 @@ class RegistrarVentaAnonimaView(APIView):
                         "items": new_comprobante.items
                     }
 
-                    venta.estado = "Registrada"
+                    venta.estado = "Completada"
                     venta.save()
 
                 # Construir respuesta
@@ -1571,3 +1591,133 @@ class GenerarComprobanteVentaView(APIView):
                 "error": "Error interno al procesar la solicitud",
                 "detalle": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from datetime import datetime
+import json
+
+
+class VentasHoyView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            tienda_id = request.user.tienda
+            
+            # Obtener fecha de hoy (desde las 00:00:00 hasta las 23:59:59)
+            hoy = datetime.now().date()
+            from_date_obj = datetime.combine(hoy, datetime.min.time())
+            to_date_obj = datetime.combine(hoy, datetime.max.time())
+            
+            # Filtrar ventas de hoy
+            ventas = Venta.objects.filter(
+                tienda_id=tienda_id,
+                fecha_hora__range=(from_date_obj, to_date_obj)
+            )
+            
+            ventas_json = []
+            for venta in ventas:
+                comprobante_venta = ComprobanteElectronico.objects.filter(venta=venta).first()
+                comprobante_json = None
+                productos = VentaProducto.objects.filter(venta=venta)
+
+                if comprobante_venta:
+                    comprobante_json = {
+                        "tipo_comprobante": comprobante_venta.tipo_comprobante,
+                        "serie": comprobante_venta.serie,
+                        "correlativo": comprobante_venta.correlativo,
+                        "moneda": comprobante_venta.moneda,
+                        "gravadas": float(comprobante_venta.gravadas) if comprobante_venta.gravadas else None,
+                        "igv": float(comprobante_venta.igv) if comprobante_venta.igv else None,
+                        "valorVenta": float(comprobante_venta.valorVenta) if comprobante_venta.valorVenta else None,
+                        "sub_total": float(comprobante_venta.sub_total) if comprobante_venta.sub_total else None,
+                        "total": float(comprobante_venta.total) if comprobante_venta.total else None,
+                        "leyenda": comprobante_venta.leyenda,
+                        "tipo_documento_cliente": comprobante_venta.tipo_documento_cliente,
+                        "numero_documento_cliente": comprobante_venta.numero_documento_cliente,
+                        "nombre_cliente": comprobante_venta.nombre_cliente,
+                        "estado_sunat": comprobante_venta.estado_sunat,
+                        "xml_url": comprobante_venta.xml_url,
+                        "pdf_url": comprobante_venta.pdf_url,
+                        "cdr_url": comprobante_venta.cdr_url,
+                        "ticket_url": comprobante_venta.ticket_url,
+                        "items": comprobante_venta.items
+                    }
+
+                productos_json = [
+                    {
+                        "id": producto.id, # type: ignore
+                        "producto": producto.producto.id if producto.producto else None, # type: ignore
+                        "producto_nombre": producto.producto.nombre, # type: ignore
+                        "cantidad": producto.cantidad,
+                        "valor_unitario": float(producto.valor_unitario),
+                        "valor_venta": float(producto.valor_venta),
+                        "base_igv": float(producto.base_igv),
+                        "porcentaje_igv": float(producto.porcentaje_igv),
+                        "igv": float(producto.igv),
+                        "tipo_afectacion_igv": producto.tipo_afectacion_igv,
+                        "total_impuestos": float(producto.total_impuestos),
+                        "precio_unitario": float(producto.precio_unitario)
+                    }
+                    for producto in productos
+                ]
+                
+                nota_credito = getattr(venta, "nota_credito", None)
+                nota_credito_json = None
+                if nota_credito:
+                    nota_credito_json = {
+                        "id": nota_credito.id,
+                        "serie": nota_credito.serie,
+                        "correlativo": nota_credito.correlativo,
+                        "tipo_comprobante_modifica": nota_credito.tipo_comprobante_modifica,
+                        "serie_modifica": nota_credito.serie_modifica,
+                        "correlativo_modifica": nota_credito.correlativo_modifica,
+                        "tipo_motivo": nota_credito.tipo_motivo,
+                        "motivo": nota_credito.motivo,
+                        "moneda": nota_credito.moneda,
+                        "total": float(nota_credito.total),
+                        "estado_sunat": nota_credito.estado_sunat,
+                        "xml_url": nota_credito.xml_url,
+                        "pdf_url": nota_credito.pdf_url,
+                        "cdr_url": nota_credito.cdr_url,
+                        "fecha_emision": nota_credito.fecha_emision.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                
+                ventas_json.append({
+                    "id": venta.id, # type: ignore
+                    "usuario": venta.usuario.id if venta.usuario else None,
+                    "tienda": venta.tienda.id, # type: ignore
+                    "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
+                    "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
+                    "fecha_cancelacion": venta.fecha_cancelacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_cancelacion else None,
+                    "metodo_pago": venta.metodo_pago,
+                    "estado": venta.estado,
+                    "activo": venta.activo,
+                    "tipo_comprobante": venta.tipo_comprobante,
+                    "productos": productos_json,
+                    "total": venta.total,
+                    "subtotal": float(venta.subtotal),
+                    "gravado_total": float(venta.gravado_total),
+                    "igv_total": float(venta.igv_total),
+                    "productos_json": json.dumps(venta.productos_json, indent=4),
+                    "comprobante": comprobante_json,
+                    "comprobante_nota_credito": nota_credito_json,
+                    "tipo_documento_cliente": venta.tipo_documento_cliente,
+                    "numero_documento_cliente": venta.numero_documento_cliente,
+                    "nombre_cliente": venta.nombre_cliente,
+                    "email_cliente": venta.email_cliente,
+                    "telefono_cliente": venta.telefono_cliente,
+                    "direccion_cliente": venta.direccion_cliente
+                })
+
+            return Response({
+                "results": ventas_json
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
