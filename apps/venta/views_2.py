@@ -12,15 +12,6 @@ from django.utils import timezone
 import requests
 import json
 from datetime import datetime
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from datetime import datetime
-import json
-from datetime import datetime, time
-from zoneinfo import ZoneInfo
-from django.utils.timezone import make_aware, get_current_timezone
 
 
 from decimal import Decimal
@@ -47,6 +38,7 @@ from apps.comprobante.models import ComprobanteElectronico
 from apps.inventario.models import Inventario
 from apps.producto.serializers import ProductoSerializer
 from apps.venta.serialzers import VentaSerializer
+from apps.venta.sunat import SunatOperations
 from core.permissions import CanCancelSalePermission, CanMakeSalePermission, IsSuperUser
 from core.settings import SUNAT_PHP
 from .models import Venta, VentaProducto, Tienda, Producto
@@ -75,13 +67,15 @@ class RegistrarVentaView(APIView):
             tienda = request.user.tienda
             usuario = request.user
             cliente_data = data["cliente"]
-            
+            tipo_venta=data["tipo_venta"]
             fecha_hora_naive = datetime.now()  
-
-            fecha_hora_aware = timezone.now()
+            IS_VENTA_ANONIMA = tipo_venta == "IS_VENTA_ANONIMA"
+            IS_VENTA_FACTURA = tipo_venta == "IS_VENTA_FACTURA"
+            IS_VENTA_BOLETA = tipo_venta == "IS_VENTA_BOLETA"
+            
             productos_registrados = []
             productos_items_for_sunat = []
-            
+            fecha_hora_aware = timezone.make_aware(fecha_hora_naive)
             
             subtotal = Decimal(0)
             gravado_total = Decimal(0)
@@ -95,109 +89,63 @@ class RegistrarVentaView(APIView):
             php_backend_url_factura = SUNAT_PHP + "/src/api/factura-post.php"
             
             with transaction.atomic():
-                venta = Venta.objects.create(
-                    usuario=usuario,
-                    tienda=tienda,
-                    metodo_pago=data["metodoPago"],
-                    tipo_comprobante=data["tipoComprobante"],
-                    fecha_hora=fecha_hora_aware,
-                    tipo_documento_cliente = "6" if data["tipoComprobante"] == "Factura" else "1",
-                    numero_documento_cliente=cliente_data["numero"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
-                    nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"],
-                    email_cliente  =  data.get("correo_cliente") if data.get("correo_cliente") else None,
-                    telefono_cliente   =  data.get("telefono_cliente") if data.get("telefono_cliente") else None,
-                    direccion_cliente  = data.get("direccion_cliente") if data.get("direccion_cliente") else None
-                )
+                
+                sunatOperations = SunatOperations("Boleta")
+                sunatOperations.prepareProductsForSunat(data["productos"])
+                sunatOperations.makeCliente(cliente_data["numero"], cliente_data["nombre"]) 
+                sunatOperations.generateLeyenda()
+                sunatOperations.generateSerieAndCorrelativo()
+                sunatOperations.sendSunatComprobante()
+                
+                
+                if(sunatOperations.isSuccessSunat):
+                    comprobante = sunatOperations.getDataComprobante()
+                    cliente = sunatOperations.cliente
+                    venta = Venta.objects.create(
+                            usuario=usuario,
+                            tienda=tienda,
+                            metodo_pago=data["metodoPago"],
+                            tipo_comprobante=data["tipoComprobante"],
+                            fecha_hora=fecha_hora_aware,
+                            tipo_documento_cliente = comprobante.tipo_documento_cliente, # type: ignore
+                            numero_documento_cliente=cliente.numero # type: ignore
+                            nombre_cliente= cliente.nombre, # type: ignore
+                            email_cliente  =  data.get("correo_cliente") if data.get("correo_cliente") else None,
+                            telefono_cliente   =  data.get("telefono_cliente") if data.get("telefono_cliente") else None,
+                            direccion_cliente  = data.get("direccion_cliente") if data.get("direccion_cliente") else None
+                        ) 
+                    for item in sunatOperations.productos_items:
+
+                            inventario = get_object_or_404(Inventario, id=item["inventarioId"])
+                            
+                            venta_producto = VentaProducto.objects.create(
+                                venta=venta,
+                                producto= inventario.producto,
+                                cantidad=item.cantidad,
+                                valor_unitario=item.valorUnitario,
+                                valor_venta=item.valorVenta,
+                                base_igv=item.valorVenta,
+                                porcentaje_igv=item.porcentajeIgv,
+                                igv=item.igv,
+                                tipo_afectacion_igv=item.tipoAfectacionIgv,
+                                total_impuestos=item.totalImpuestos,
+                                precio_unitario=item.precioUnitario,
+                                descuento=float(item.descuento),
+                                costo_original=round(float(item.costo_original), 2),
+                            )
+                            venta_producto.save()
+                                                      
+
+                 
+                    
+                else:
+                    print("ERROR ")
+
+                
+                
+                
                              
-                for item in data["productos"]:
-
-                    inventario = get_object_or_404(Inventario, id=item["inventarioId"])
-                    producto = inventario.producto
-
-                    cantidad = int(item["cantidad_final"])
-                    descuento = Decimal(item["descuento"])
-                    precio_base = Decimal(inventario.costo_venta) # type: ignore
-
-                    # Descuento prorrateado por unidad
-                    descuento_unitario = descuento / cantidad
-
-                    # Precio final con IGV incluido
-                    precio_unitario = precio_base - descuento_unitario
-                    precio_unitario_original = precio_base
-
-                    # Valor unitario sin IGV
-                    valor_unitario = precio_unitario / (Decimal("1.00") + factor_igv)
-
-                    # Cálculos finales
-                    valor_venta = cantidad * valor_unitario
-                    igv = valor_venta * factor_igv
-                    
-                    # Registrar en BD
-                    venta_producto = VentaProducto.objects.create(
-                        venta=venta,
-                        producto=producto,
-                        cantidad=cantidad,
-                        valor_unitario=valor_unitario,
-                        valor_venta=valor_venta,
-                        base_igv=valor_venta,
-                        porcentaje_igv=porcentaje_igv,
-                        igv=igv,
-                        tipo_afectacion_igv="10",
-                        total_impuestos=igv,
-                        precio_unitario=precio_unitario,
-                        descuento=float(descuento),
-                        costo_original=round(float(precio_unitario_original), 2),
-                    )
-                    venta_producto.save()
-
-                    # Actualizar inventario
-                    inventario.cantidad -= cantidad
-                    inventario.save()
-
-                    # Totales generales
-                    gravado_total += valor_venta
-                    igv_total += igv
-                    total += precio_unitario * cantidad
-
-                    # Response interno
-                    productos_registrados.append({
-                        "producto_id": producto.id, # type: ignore
-                        "producto_nombre": producto.nombre,
-                        "cantidad": cantidad,
-                        "valor_unitario": float(valor_unitario),
-                        "valor_venta": float(valor_venta),
-                        "igv": float(igv),
-                        "precio_unitario": float(precio_unitario),
-                        "costo_original": float(precio_unitario_original),
-                        "descuento": float(descuento)
-                    })
-
-                    # SUNAT items
-                    igv_calculado = valor_venta * factor_igv
-                    productos_items_for_sunat.append({
-                        "codigo": producto.sku,
-                        "unidad": "NIU",
-                        "descripcion": producto.nombre,
-                        "cantidad": cantidad,
-                        "valorUnitario": round(float(valor_unitario), 2),
-                        "valorVenta": round(float(valor_venta), 2),
-                        "baseIgv": round(float(valor_venta), 2),
-                        "porcentajeIgv": 18,
-                        "igv": round(float(igv_calculado), 2),
-                        "tipoAfectacionIgv": "10",
-                        "totalImpuestos": round(float(igv_calculado), 2),
-                        "precioUnitario": round(float(precio_unitario), 2),
-                        "costo_original": round(float(precio_unitario_original), 2),
-                        "descuento": float(descuento)
-                    })
-
-                    # Actualizar venta en tiempo real
-                    venta.subtotal = subtotal
-                    venta.gravado_total = gravado_total
-                    venta.igv_total = igv_total
-                    venta.total = total
-                    venta.productos_json = productos_registrados
-                    
+               
                     
                 leyenda = generateLeyend(total)
                     
@@ -315,9 +263,9 @@ class RegistrarVentaView(APIView):
                         "metodo_pago" :venta.metodo_pago,
                         "estado" :venta.estado,
                         "activo" :venta.activo,
-                        
-                        "fecha_hora": venta.fecha_hora.isoformat(),
-                        "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
+                        "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
+                        "fecha_realizacion" :venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
+                        "subtotal": float(subtotal),
                         "gravado_total": float(gravado_total),
                         "igv_total": float(igv_total),
                         "total": float(total),
@@ -532,7 +480,7 @@ class RegistrarVentaSinComprobanteView(APIView):
             cliente_data = data.get("cliente", {})
 
             
-            fecha_hora_aware = timezone.now()
+            fecha_hora_aware = timezone.make_aware(datetime.now())
 
             with transaction.atomic():
                 # Crear venta
@@ -682,7 +630,7 @@ class RegistrarVentaAnonimaView(APIView):
 
             tienda = request.user.tienda
             usuario = request.user
-            fecha_hora_aware = timezone.now()
+            fecha_hora_aware = timezone.make_aware(datetime.now())
 
             with transaction.atomic():
                 # Crear la venta
@@ -995,17 +943,11 @@ class VentaSalesByDateView(APIView):
 
         if not from_date or not to_date:
             return Response({"error": "Se debe proporcionar un rango de fechas válido"}, status=status.HTTP_400_BAD_REQUEST)
-        tz = get_current_timezone()
 
-        from_date_obj = make_aware(
-            datetime(from_date[0], from_date[1] + 1, from_date[2]),
-            timezone=tz
-        )
-
-        to_date_obj = make_aware(
-            datetime(to_date[0], to_date[1] + 1, to_date[2]),
-            timezone=tz
-        )
+        # Convertir de [year, month, day] a objetos datetime (sin horas, minutos ni segundos)
+        # Ajustar el mes, ya que el mes está en formato 0-11
+        from_date_obj = make_aware(datetime(from_date[0], from_date[1] + 1, from_date[2]))  # Ajuste mes
+        to_date_obj = make_aware(datetime(to_date[0], to_date[1] + 1, to_date[2]))  # Ajuste mes
 
         # Convertir las fechas a solo la parte de la fecha (sin horas)
         from_date_obj = from_date_obj.date()
@@ -1044,49 +986,46 @@ class VentaSalesByDateView(APIView):
 
 
 
-
-class ProductosMasVendidosHoyView(APIView):
+class ProductosMasVendidosView(APIView):
     permission_classes = [IsAuthenticated]
-
     def post(self, request):
+        fd = request.data.get('from_date')
+        td = request.data.get('to_date')
         tienda = request.user.tienda
 
-        # 🟦 1️⃣ Obtener el rango de HOY (00:00:00 → 23:59:59)
-        hoy = datetime.now().date()
+        # Normalizar fechas
+        fd = normalize_date(fd, end_of_day=False)
+        td = normalize_date(td, end_of_day=True)
 
-        from_date = make_aware(datetime.combine(hoy, time.min))   # 00:00:00
-        to_date   = make_aware(datetime.combine(hoy, time.max))   # 23:59:59
-
-        # 🟩 2️⃣ Filtramos ventas solo de HOY
+        # 1️⃣ Filtramos ventas
         ventas = Venta.objects.filter(
             tienda=tienda,
-            activo=True,
-            fecha_hora__range=(from_date, to_date)
+          
+            activo=True
         )
 
-        # 🟧 3️⃣ Obtener productos de esas ventas
+        # 2️⃣ Productos de esas ventas
         venta_productos = VentaProducto.objects.filter(venta__in=ventas)
 
-        # 🟥 4️⃣ Contar por producto
+        # 3️⃣ Agrupar por producto
+        productos_data = []
         contador = Counter()
+
         for vp in venta_productos:
-            if vp.producto:
+            if vp.producto:  # evitar productos nulos
                 contador[vp.producto.nombre] += vp.cantidad
 
-        # 🟨 5️⃣ Construir respuesta
-        productos_data = [
-            {
+        # 4️⃣ Armar respuesta
+        for nombre, cantidad in contador.items():
+            productos_data.append({
                 "nombre": nombre,
                 "cantidad_total_vendida": cantidad
-            }
-            for nombre, cantidad in contador.items()
-        ]
+            })
 
-        # Ordenar por más vendidos
-        productos_data.sort(key=lambda x: x["cantidad_total_vendida"], reverse=True)
+        # Ordenamos por más vendidos primero
+        productos_data = sorted(productos_data, key=lambda x: x["cantidad_total_vendida"], reverse=True)
 
         return Response({"results": productos_data})
-
     
 class VentasPerDayOrMonth(APIView):
     permission_classes = [IsAuthenticated]
@@ -1166,31 +1105,19 @@ class VentaBusquedaView(APIView):
             to_date = query.get('to_date')
             
                
-            tz = get_current_timezone()
-
-            from_date_obj = make_aware(
-                datetime(
-                    year=from_date[0],
-                    month=from_date[1] + 1,
-                    day=from_date[2],
-                    hour=0,
-                    minute=0,
-                    second=0
-                ),
-                timezone=tz
+            from_date_obj = datetime(
+                        year=from_date[0],
+                        month=from_date[1] + 1,  # Convertir a 1-based
+                        day=from_date[2]
             )
-
-            to_date_obj = make_aware(
-                datetime(
-                    year=to_date[0],
-                    month=to_date[1] + 1,
-                    day=to_date[2],
-                    hour=23,
-                    minute=59,
-                    second=59
-                ),
-                timezone=tz
-            ) 
+            to_date_obj = datetime(
+                        year=to_date[0],
+                        month=to_date[1] + 1,    # Convertir a 1-based
+                        day=to_date[2],
+                        hour=23,
+                        minute=59,
+                        second=59
+            )
             
             
             ventas = ventas.filter(fecha_hora__range=(from_date_obj, to_date_obj))
@@ -1340,22 +1267,14 @@ class VentasPorTiendaView(APIView):
             # Obtener parámetros de la URL
             page_size = int(request.query_params.get('page_size', 5))
             page_number = int(request.query_params.get('page', 1))
-           
             tienda_id = request.user.tienda
             
             # Filtro por fecha (ahora espera strings en formato YYYY-MM-DD)
             from_date_str = request.query_params.get('from_date')
             to_date_str = request.query_params.get('to_date')
      
-            tz = ZoneInfo("America/Lima")
-
-            from_date_obj = datetime.strptime(from_date_str, '%Y-%m-%d').replace(
-                hour=0, minute=0, second=0, microsecond=0, tzinfo=tz
-            )
-
-            to_date_obj = datetime.strptime(to_date_str, '%Y-%m-%d').replace(
-                hour=23, minute=59, second=59, microsecond=0, tzinfo=tz
-            ) 
+            from_date_obj = datetime.strptime(from_date_str, '%Y-%m-%d')
+            to_date_obj = datetime.strptime(to_date_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
             ventas = Venta.objects.all()
             ventas = ventas.filter(tienda_id=tienda_id,fecha_hora__range=(from_date_obj, to_date_obj))
             
@@ -1438,8 +1357,8 @@ class VentasPorTiendaView(APIView):
                     "id": venta.id,
                     "usuario": venta.usuario.id if venta.usuario else None,
                     "tienda": venta.tienda.id,
-                    "fecha_hora": venta.fecha_hora.isoformat(),
-                    "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
+                    "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
+                    "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
                     "fecha_cancelacion": venta.fecha_cancelacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_cancelacion else None,
                     "metodo_pago": venta.metodo_pago,
                     "estado": venta.estado,
@@ -1486,6 +1405,13 @@ class VentasPorTiendaView(APIView):
          
             
 
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from datetime import datetime
+import json
+
 
 class VentasHoyView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1495,14 +1421,10 @@ class VentasHoyView(APIView):
             tienda_id = request.user.tienda
             
             # Obtener fecha de hoy (desde las 00:00:00 hasta las 23:59:59)
- 
-            tz = ZoneInfo("America/Lima")
-            now = datetime.now(tz)
-
-            hoy = now.date()
-
-            from_date_obj = datetime.combine(hoy, time(0, 0, 0, tzinfo=tz))
-            to_date_obj   = datetime.combine(hoy, time(23, 59, 59, tzinfo=tz))
+            hoy = datetime.now().date()
+            from_date_obj = datetime.combine(hoy, datetime.min.time())
+            to_date_obj = datetime.combine(hoy, datetime.max.time())
+            
             # Filtrar ventas de hoy
             ventas = Venta.objects.filter(
                 tienda_id=tienda_id,
@@ -1581,8 +1503,8 @@ class VentasHoyView(APIView):
                     "id": venta.id, # type: ignore
                     "usuario": venta.usuario.id if venta.usuario else None,
                     "tienda": venta.tienda.id, # type: ignore
-                    "fecha_hora": venta.fecha_hora.isoformat(),
-                    "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
+                    "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
+                    "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
                     "fecha_cancelacion": venta.fecha_cancelacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_cancelacion else None,
                     "metodo_pago": venta.metodo_pago,
                     "estado": venta.estado,
