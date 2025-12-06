@@ -110,30 +110,19 @@ class RegistrarVentaView(APIView):
                 )
                              
                 for item in data["productos"]:
-
                     inventario = get_object_or_404(Inventario, id=item["inventarioId"])
                     producto = inventario.producto
-
                     cantidad = int(item["cantidad_final"])
-                    descuento = Decimal(item["descuento"])
-                    precio_base = Decimal(inventario.costo_venta) # type: ignore
-
-                    # Descuento prorrateado por unidad
-                    descuento_unitario = descuento / cantidad
-
-                    # Precio final con IGV incluido
-                    precio_unitario = precio_base - descuento_unitario
-                    precio_unitario_original = precio_base
-
-                    # Valor unitario sin IGV
-                    valor_unitario = precio_unitario / (Decimal("1.00") + factor_igv)
-
-                    # Cálculos finales
+                    descuento = int(item["descuento"])
+                    precio_unitario_original = Decimal(inventario.costo_venta)   # type: ignore # Precio de venta final con IGV
+                    precio_unitario = Decimal(inventario.costo_venta)  - Decimal(descuento/int(item["cantidad_final"]))  # type: ignore
+                    porcentaje_igv = Decimal("18.00")
+                    valor_unitario = precio_unitario / (Decimal("1.00") + (porcentaje_igv / Decimal("100.00")))
                     valor_venta = cantidad * valor_unitario
-                    igv = valor_venta * factor_igv
-                    
-                    # Registrar en BD
-                    venta_producto = VentaProducto.objects.create(
+                    igv = valor_venta * (porcentaje_igv / Decimal("100.00"))
+                    total_impuestos = igv
+
+                    VentaProducto.objects.create(
                         venta=venta,
                         producto=producto,
                         cantidad=cantidad,
@@ -143,23 +132,20 @@ class RegistrarVentaView(APIView):
                         porcentaje_igv=porcentaje_igv,
                         igv=igv,
                         tipo_afectacion_igv="10",
-                        total_impuestos=igv,
+                        total_impuestos=total_impuestos,
                         precio_unitario=precio_unitario,
-                        descuento=float(descuento),
-                        costo_original=round(float(precio_unitario_original), 2),
+                        descuento=int(item["descuento"]),
+                                          costo_original=round(float(precio_unitario_original),2),
                     )
-                    venta_producto.save()
 
-                    # Actualizar inventario
                     inventario.cantidad -= cantidad
                     inventario.save()
 
-                    # Totales generales
+                    subtotal += valor_venta
                     gravado_total += valor_venta
                     igv_total += igv
                     total += precio_unitario * cantidad
 
-                    # Response interno
                     productos_registrados.append({
                         "producto_id": producto.id, # type: ignore
                         "producto_nombre": producto.nombre,
@@ -168,8 +154,8 @@ class RegistrarVentaView(APIView):
                         "valor_venta": float(valor_venta),
                         "igv": float(igv),
                         "precio_unitario": float(precio_unitario),
-                        "costo_original": float(precio_unitario_original),
-                        "descuento": float(descuento)
+                          "costo_original": float(precio_unitario_original),  # Con IGV,
+                            "descuento":round(float(descuento),2)  
                     })
 
                     # SUNAT items
@@ -192,11 +178,11 @@ class RegistrarVentaView(APIView):
                     })
 
                     # Actualizar venta en tiempo real
-                    venta.subtotal = subtotal
-                    venta.gravado_total = gravado_total
-                    venta.igv_total = igv_total
-                    venta.total = total
-                    venta.productos_json = productos_registrados
+                venta.subtotal = subtotal
+                venta.gravado_total = gravado_total
+                venta.igv_total = igv_total
+                venta.total = total
+                venta.productos_json = productos_registrados
                     
                     
                 leyenda = generateLeyend(total)

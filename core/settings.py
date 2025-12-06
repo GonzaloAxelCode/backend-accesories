@@ -33,8 +33,8 @@ CSRF_TRUSTED_ORIGINS = [
     'https://inventario-electronic-w7mn.vercel.app',  # ← Tu frontend en Vercel
 ]
 
-SUNAT_PHP = "http://174.138.55.7"
-SUNAT_PHP_ = "http://localhost:8080"
+SUNAT_PHP_= "http://174.138.55.7"
+SUNAT_PHP= "http://localhost:8080"
 
 
 # Application definition
