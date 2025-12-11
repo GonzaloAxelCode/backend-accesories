@@ -140,7 +140,7 @@ class GetAllProductosAPIViewWithPagination(APIView):
             "index_page": page_number - 1,
             "length_pages": total_paginas ,
             "results": serializer.data,
-            # ✅ SIN all_results
+            
         })
 
 
