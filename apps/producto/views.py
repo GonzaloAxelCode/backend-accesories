@@ -58,7 +58,7 @@ class BuscarProductoAPIView(APIView):
         except (ValueError, TypeError):
             categoria = 0
 
-        activo = query.get('activo', None)
+        
 
         # ----- Filtros -----
         filtros = Q(tienda=tienda)
@@ -74,11 +74,10 @@ class BuscarProductoAPIView(APIView):
         if categoria > 0:
             filtros &= Q(categoria_id=categoria)
 
-        if activo is not None:
-            filtros &= Q(activo=activo)
+    
 
         # ----- Query -----
-        productos = Producto.objects.filter(filtros).distinct()
+        productos = Producto.objects.filter(filtros,activo=True).distinct()
         total_productos = productos.count()
 
         if total_productos == 0:
@@ -108,19 +107,21 @@ class BuscarProductoAPIView(APIView):
 
 
 # ---------- LISTAR TODOS LOS PRODUCTOS ----------
-class GetAllProductosAPIViewWithpagination(APIView):
+class GetAllProductosAPIViewWithPagination(APIView):
     permission_classes = [IsAuthenticated]
+    
     def get(self, request):
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
-            return Response({"error": "El usuario no tiene una tienda asignada."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        productos = Producto.objects.filter(tienda=tienda).order_by('id')
-        serializer_all = ProductoSerializer(Producto.objects.filter(tienda=tienda,activo=True).order_by('id'), many=True)
+        # ✅ Solo productos activos
+        productos = Producto.objects.filter(tienda=tienda).exclude(nombre__icontains="(Delete)")
         total_productos = productos.count()
-
-        page_size = int(request.query_params.get('page_size', 5))
+        page_size = int(request.query_params.get('page_size', 10))
         page_number = int(request.query_params.get('page', 1))
         total_paginas = ceil(total_productos / page_size)
 
@@ -129,7 +130,6 @@ class GetAllProductosAPIViewWithpagination(APIView):
         paginated_products = paginator.paginate_queryset(productos, request)
         serializer = ProductoSerializer(paginated_products, many=True)
         
-
         next_page = page_number + 1 if page_number < total_paginas else None
         previous_page = page_number - 1 if page_number > 1 else None
 
@@ -138,10 +138,12 @@ class GetAllProductosAPIViewWithpagination(APIView):
             "next": next_page,
             "previous": previous_page,
             "index_page": page_number - 1,
-            "length_pages": total_paginas - 1,
+            "length_pages": total_paginas ,
             "results": serializer.data,
-            "all_results":serializer_all.data
+            # ✅ SIN all_results
         })
+
+
 
 class GetAllProductosAPIView(APIView):
     permission_classes = [IsAuthenticated]
