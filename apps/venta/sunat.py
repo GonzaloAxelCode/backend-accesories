@@ -10,8 +10,8 @@ import requests
 class SunatOperations():
     
     headers = {"Content-Type": "application/json"}    
-    boletaURL = SUNAT_PHP + "/src/api/boleta-post.php"
-    facturaURL = SUNAT_PHP + "/src/api/factura-post.php"
+    boletaURL = ""
+    facturaURL = ""
     comprobante = None
     comprobanteBuild = None
     tipoComprobante = "Boleta"

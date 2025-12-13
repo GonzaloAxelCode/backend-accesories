@@ -4,12 +4,11 @@ import environ # type: ignore
 
 import os
 
-
 env = environ.Env()
 environ.Env.read_env()
 ENVIRONMENT = env
 
-
+SUNAT_PHP = env("SUNAT_PHP") 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -33,8 +32,7 @@ CSRF_TRUSTED_ORIGINS = [
     'https://inventario-electronic-w7mn.vercel.app',  # ← Tu frontend en Vercel
 ]
 
-SUNAT_PHP= "http://174.138.55.7"
-SUNAT_PHP_= "http://localhost:8080"
+
 
 
 # Application definition

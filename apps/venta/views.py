@@ -91,8 +91,8 @@ class RegistrarVentaView(APIView):
             exonerado_total = Decimal(0) 
             porcentaje_igv = Decimal("18.00") 
             factor_igv = porcentaje_igv / Decimal("100.00") 
-            php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php"
-            php_backend_url_factura = SUNAT_PHP + "/src/api/factura-post.php"
+            php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php" # type: ignore
+            php_backend_url_factura = SUNAT_PHP + "/src/api/factura-post.php" # type: ignore
             
             with transaction.atomic():
                 venta = Venta.objects.create(
@@ -330,8 +330,8 @@ class GenerarComprobanteVentaView(APIView):
             venta_id = request.data.get("venta_id")
             productos_items_for_sunat = []
             porcentaje_igv = Decimal("18.00") 
-            php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php"
-            php_backend_url_factura = SUNAT_PHP + "/src/api/factura-post.php"
+            php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php" # type: ignore
+            php_backend_url_factura = SUNAT_PHP + "/src/api/factura-post.php" # type: ignore
                 
            
 
@@ -795,7 +795,7 @@ class RegistrarVentaAnonimaView(APIView):
                     }
 
                     # Enviar a SUNAT
-                    php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php"
+                    php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php" # type: ignore
                     headers = {"Content-Type": "application/json"}
                     response = requests.post(php_backend_url_boleta, json=comprobante_data, headers=headers)
 
