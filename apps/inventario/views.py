@@ -74,12 +74,7 @@ class CrearInventario(APIView):
 class GetAllInventarioAPIView(APIView):
     permission_classes=[IsAuthenticated]
     def get(self, request):
-        user = request.user
-        print("Tipo:", type(user))
-        print("Usuario:", user)
-        print("Autenticado:", user.is_authenticated)
-        print("Auth info:", request.auth)
-
+        
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
             return Response(
