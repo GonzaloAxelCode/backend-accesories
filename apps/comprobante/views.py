@@ -173,7 +173,19 @@ class RegistrarNotaCreditoView(APIView):
             correlativo_nc = str(int(ultima_nc.correlativo) + 1).zfill(8) if ultima_nc else "00000001"
 
             fecha_emision = timezone.now()
-
+            # 🔹 Normalizar cliente (especialmente para cliente anónimo)
+            if data["anonima"]:
+                cliente = {
+                    "tipoDoc": "0",
+                    "numDoc": "0",
+                    "nombre": "CLIENTE ANÓNIMO",
+                }
+            else:
+                cliente = {
+                    "tipoDoc": comprobante.tipo_documento_cliente,
+                    "numDoc": comprobante.numero_documento_cliente,
+                    "nombre": comprobante.nombre_cliente,
+                }
             # 🔹 JSON a enviar al backend PHP
             comprobante_data = {
                 "tipo_comprobante": "07",
@@ -191,11 +203,7 @@ class RegistrarNotaCreditoView(APIView):
                     "serie": comprobante.serie,
                     "correlativo": comprobante.correlativo,
                 },
-                "cliente": {
-                    "tipoDoc": comprobante.tipo_documento_cliente,
-                    "numDoc": comprobante.numero_documento_cliente,
-                    "nombre": comprobante.nombre_cliente,
-                },
+                "cliente": cliente,
                 "items": comprobante.items,
             }
             print(comprobante_data)
