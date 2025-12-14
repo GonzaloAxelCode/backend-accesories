@@ -174,7 +174,8 @@ class RegistrarVentaView(APIView):
                         "totalImpuestos": round(float(igv_calculado), 2),
                         "precioUnitario": round(float(precio_unitario), 2),
                         "costo_original": round(float(precio_unitario_original), 2),
-                        "descuento": float(descuento)
+                        "descuento": float(descuento),
+                        "producto_imagen": producto.imagen.url if producto.imagen else None
                     })
 
                     # Actualizar venta en tiempo real
@@ -353,7 +354,8 @@ class GenerarComprobanteVentaView(APIView):
                         "totalImpuestos": round(float(vp.total_impuestos), 2),
                         "precioUnitario": round(float(vp.precio_unitario), 2),
                         "costo_original": float(vp.costo_original),  # Con IGV, # type: ignore
-                        "descuento":round(float(vp.descuento),2)      
+                        "descuento":round(float(vp.descuento),2),
+                        "producto_imagen": vp.producto.imagen.url if vp.producto and vp.producto.imagen else None
                     })
                 
                 # Generar leyenda
@@ -757,7 +759,8 @@ class RegistrarVentaAnonimaView(APIView):
                             "totalImpuestos": round(float(valor_venta * (porcentaje_igv / 100)), 2),
                             "precioUnitario": round(float(precio_unitario), 2),
                               "costo_original": float(precio_unitario_original),  # Con IGV,
-                            "descuento":round(float(descuento),2)      
+                            "descuento":round(float(descuento),2),
+                                                    "producto_imagen": producto.imagen.url if producto.imagen else None
                         })
 
                 venta.subtotal = subtotal
@@ -1387,6 +1390,7 @@ class VentasPorTiendaView(APIView):
                     {
                         "id": producto.id, # type: ignore
                         "producto": producto.producto.id if producto.producto else None, # type: ignore
+                        "producto_imagen": producto.producto.imagen.url if producto.producto and producto.producto.imagen else None, # type: ignore
                         "producto_nombre": producto.producto.nombre, # type: ignore
                         "cantidad": producto.cantidad,
                         "valor_unitario": float(producto.valor_unitario),
