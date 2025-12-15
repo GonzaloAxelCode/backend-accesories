@@ -176,10 +176,11 @@ class RegistrarNotaCreditoView(APIView):
             # 🔹 Normalizar cliente (especialmente para cliente anónimo)
             if data["anonima"]:
                 cliente = {
-                    "tipoDoc": "0",
-                    "numDoc": "0",
-                    "nombre": "CLIENTE ANÓNIMO",
-                }
+                    "tipoDoc": "1",        
+                    "numDoc": "00000000", 
+                    "nombre": "CLIENTE ANÓNIMO"
+                    }
+
             else:
                 cliente = {
                     "tipoDoc": comprobante.tipo_documento_cliente,

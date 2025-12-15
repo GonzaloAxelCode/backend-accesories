@@ -50,7 +50,7 @@ class GetAllClientes(APIView):
         tienda = getattr(request.user, "tienda", None)
         clientes = Cliente.objects.filter(tienda=tienda)
         serializer = ClienteSerializer(clientes, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"results": serializer.data}, status=status.HTTP_200_OK)
 
 class GetCliente(APIView):
     def get(self, request, dni):

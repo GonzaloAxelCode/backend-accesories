@@ -27,7 +27,7 @@ def generateLeyend(monto):
     return f"SON {num2words(monto, lang='es').upper()} CON 00/100 SOLES"
 
 
-def getNextCorrelativo(tipo_comprobante: str,correlativo_inicial_f: int = 2,correlativo_inicial_b: int = 1):
+def getNextCorrelativo(tipo_comprobante: str,correlativo_inicial_f: int = 9,correlativo_inicial_b: int = 9,correlativo_inicial_n: int = 4):
                 tipo = tipo_comprobante.lower()
                 if tipo == "factura":
                     serie_base = "F001"

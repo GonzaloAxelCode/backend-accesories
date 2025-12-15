@@ -8,7 +8,8 @@ env = environ.Env()
 environ.Env.read_env()
 ENVIRONMENT = env
 
-SUNAT_PHP = env("SUNAT_PHP") 
+
+SUNAT_PHP = os.getenv("SUNAT_PHP", "").strip()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 

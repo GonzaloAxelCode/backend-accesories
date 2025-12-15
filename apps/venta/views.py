@@ -1,4 +1,5 @@
 from ast import Is
+from calendar import c
 from collections import Counter
 from datetime import timedelta
 from django.utils.dateparse import parse_date
@@ -67,60 +68,81 @@ class VentaPagination(PageNumberPagination):
     max_page_size = 100  
     
     
-class RegistrarVentaView(APIView): 
-    permission_classes = [IsAuthenticated,CanMakeSalePermission]
+class RegistrarVentaView(APIView):
+    permission_classes = [IsAuthenticated, CanMakeSalePermission]
+
     def post(self, request):
         try:
             data = request.data
             tienda = request.user.tienda
             usuario = request.user
             cliente_data = data["cliente"]
-            
-            fecha_hora_naive = datetime.now()  
+            if not cliente_data:
+                        cliente_data = {
+                            "numero": "00000000",  # Documento ficticio
+                            "nombre_o_razon_social": "CLIENTE ANÓNIMO",
+                            "nombre_completo": "CLIENTE ANÓNIMO",
+                            "email_cliente": None,
+                            "telefono_cliente": None,
+                            "direccion_cliente": None
+                        }
+            fecha_hora = timezone.now()
 
-            fecha_hora_aware = timezone.now()
             productos_registrados = []
             productos_items_for_sunat = []
-            
-            
-            subtotal = Decimal(0)
-            gravado_total = Decimal(0)
-            igv_total = Decimal(0)
-            total = Decimal(0)
-            descuento_total = Decimal(0)
-            exonerado_total = Decimal(0) 
-            porcentaje_igv = Decimal("18.00") 
-            factor_igv = porcentaje_igv / Decimal("100.00") 
-            php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php" # type: ignore
-            php_backend_url_factura = SUNAT_PHP + "/src/api/factura-post.php" # type: ignore
-            
+
+            subtotal = Decimal("0.00")
+            gravado_total = Decimal("0.00")
+            igv_total = Decimal("0.00")
+            total = Decimal("0.00")
+            exonerado_total = Decimal("0.00")
+
+            porcentaje_igv = Decimal("18.00")
+            factor_igv = porcentaje_igv / Decimal("100.00")
+
+            php_backend_url = (
+                f"{SUNAT_PHP.rstrip('/')}/src/api/factura-post.php"
+                if data["tipoComprobante"] == "Factura"
+                else f"{SUNAT_PHP.rstrip('/')}/src/api/boleta-post.php"
+            )
+
+            # =====================================================
+            # 1️⃣ TRANSACCIÓN SOLO BD
+            # =====================================================
             with transaction.atomic():
+                
                 venta = Venta.objects.create(
                     usuario=usuario,
                     tienda=tienda,
                     metodo_pago=data["metodoPago"],
                     tipo_comprobante=data["tipoComprobante"],
-                    fecha_hora=fecha_hora_aware,
-                    tipo_documento_cliente = "6" if data["tipoComprobante"] == "Factura" else "1",
-                    numero_documento_cliente=cliente_data["numero"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
-                    nombre_cliente= cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"],
-                    email_cliente  =  data.get("correo_cliente") if data.get("correo_cliente") else None,
-                    telefono_cliente   =  data.get("telefono_cliente") if data.get("telefono_cliente") else None,
-                    direccion_cliente  = data.get("direccion_cliente") if data.get("direccion_cliente") else None
+                    fecha_hora=fecha_hora,
+                    estado="PENDIENTE",
+                    tipo_documento_cliente="6" if data["tipoComprobante"] == "Factura" else "1",
+                    numero_documento_cliente=cliente_data["numero"],
+                    nombre_cliente=(
+                        cliente_data["nombre_o_razon_social"]
+                        if data["tipoComprobante"] == "Factura"
+                        else cliente_data["nombre_completo"]
+                    ),
+                    email_cliente=data.get("correo_cliente"),
+                    telefono_cliente=data.get("telefono_cliente"),
+                    direccion_cliente=data.get("direccion_cliente"),
                 )
-                             
+
                 for item in data["productos"]:
                     inventario = get_object_or_404(Inventario, id=item["inventarioId"])
                     producto = inventario.producto
+
                     cantidad = int(item["cantidad_final"])
-                    descuento = int(item["descuento"])
-                    precio_unitario_original = Decimal(inventario.costo_venta)   # type: ignore # Precio de venta final con IGV
-                    precio_unitario = Decimal(inventario.costo_venta)  - Decimal(descuento/int(item["cantidad_final"]))  # type: ignore
-                    porcentaje_igv = Decimal("18.00")
-                    valor_unitario = precio_unitario / (Decimal("1.00") + (porcentaje_igv / Decimal("100.00")))
-                    valor_venta = cantidad * valor_unitario
-                    igv = valor_venta * (porcentaje_igv / Decimal("100.00"))
-                    total_impuestos = igv
+                    descuento = Decimal(item["descuento"])
+
+                    precio_unitario_original = Decimal(inventario.costo_venta) # type: ignore
+                    precio_unitario = precio_unitario_original - (descuento / cantidad)
+
+                    valor_unitario = precio_unitario / (Decimal("1.00") + factor_igv)
+                    valor_venta = valor_unitario * cantidad
+                    igv = valor_venta * factor_igv
 
                     VentaProducto.objects.create(
                         venta=venta,
@@ -132,10 +154,10 @@ class RegistrarVentaView(APIView):
                         porcentaje_igv=porcentaje_igv,
                         igv=igv,
                         tipo_afectacion_igv="10",
-                        total_impuestos=total_impuestos,
+                        total_impuestos=igv,
                         precio_unitario=precio_unitario,
-                        descuento=int(item["descuento"]),
-                                          costo_original=round(float(precio_unitario_original),2),
+                        descuento=descuento,
+                        costo_original=precio_unitario_original,
                     )
 
                     inventario.cantidad -= cantidad
@@ -154,12 +176,10 @@ class RegistrarVentaView(APIView):
                         "valor_venta": float(valor_venta),
                         "igv": float(igv),
                         "precio_unitario": float(precio_unitario),
-                          "costo_original": float(precio_unitario_original),  # Con IGV,
-                            "descuento":round(float(descuento),2)  
+                        "costo_original": float(precio_unitario_original),
+                        "descuento": float(descuento),
                     })
 
-                    # SUNAT items
-                    igv_calculado = valor_venta * factor_igv
                     productos_items_for_sunat.append({
                         "codigo": producto.sku,
                         "unidad": "NIU",
@@ -169,159 +189,152 @@ class RegistrarVentaView(APIView):
                         "valorVenta": round(float(valor_venta), 2),
                         "baseIgv": round(float(valor_venta), 2),
                         "porcentajeIgv": 18,
-                        "igv": round(float(igv_calculado), 2),
+                        "igv": round(float(igv), 2),
                         "tipoAfectacionIgv": "10",
-                        "totalImpuestos": round(float(igv_calculado), 2),
+                        "totalImpuestos": round(float(igv), 2),
                         "precioUnitario": round(float(precio_unitario), 2),
-                        "costo_original": round(float(precio_unitario_original), 2),
-                        "descuento": float(descuento),
-                        "producto_imagen": producto.imagen.url if producto.imagen else None
                     })
 
-                    # Actualizar venta en tiempo real
                 venta.subtotal = subtotal
                 venta.gravado_total = gravado_total
                 venta.igv_total = igv_total
                 venta.total = total
                 venta.productos_json = productos_registrados
-                    
-                    
+                venta.save()
+
                 leyenda = generateLeyend(total)
-                    
-                serie_generada, correlativo_generado = getNextCorrelativo(data["tipoComprobante"])
+                serie, correlativo = getNextCorrelativo(data["tipoComprobante"])
 
                 comprobante_data = {
-                        "serie": serie_generada,
-                        "correlativo": correlativo_generado,
-                        "moneda": "PEN",
-                        "gravadas": float(gravado_total),
-                        "exoneradas": float(exonerado_total),
-                        "igv": float(igv_total),
-                        "valorVenta": float(subtotal),
-                        "subTotal": float(subtotal + igv_total),
-                        "total": float(total),
-                        "leyenda": leyenda,
-                        "cliente": {
-                             "tipoDoc": "6" if data["tipoComprobante"] == "Factura" else "1",
-                             "numDoc": cliente_data["numero"]  if data["tipoComprobante"] == "Factura" else cliente_data["numero"],
-                             "nombre": cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"]
-                        },
-                        "items":productos_items_for_sunat
+                    "serie": serie,
+                    "correlativo": correlativo,
+                    "moneda": "PEN",
+                    "gravadas": float(gravado_total),
+                    "exoneradas": float(exonerado_total),
+                    "igv": float(igv_total),
+                    "valorVenta": float(subtotal),
+                    "subTotal": float(subtotal + igv_total),
+                    "total": float(total),
+                    "leyenda": leyenda,
+                    "cliente": {
+                        "tipoDoc": venta.tipo_documento_cliente, 
+                        "numDoc": venta.numero_documento_cliente,
+                        "nombre": venta.nombre_cliente,
+                    },
+                    "items": productos_items_for_sunat,
                 }
 
-               
-                headers = {"Content-Type": "application/json"}
-                response = requests.post(php_backend_url_factura if data["tipoComprobante"] == "Factura" else php_backend_url_boleta , json=comprobante_data, headers=headers)           
-                try:
-                     response.json()
-                except Exception:
-                    raise Exception(f"La API PHP devolvió una respuesta no JSON: {response.text}")
+                comprobante = ComprobanteElectronico.objects.create(
+                    venta=venta,
+                    tipo_comprobante=data["tipoComprobante"],
+                    serie=serie,
+                    correlativo=correlativo,
+                    moneda="PEN",
+                    gravadas=gravado_total,
+                    igv=igv_total,
+                    valorVenta=subtotal,
+                    sub_total=subtotal + igv_total,
+                    total=total,
+                    leyenda=leyenda,
+                    tipo_documento_cliente=venta.tipo_documento_cliente,
+                    numero_documento_cliente=venta.numero_documento_cliente,
+                    nombre_cliente=venta.nombre_cliente,
+                    estado_sunat="PENDIENTE",
+                  
+                    items=comprobante_data["items"],
+                )
 
-                if response.status_code == 200:
-                 
-                    document = cliente_data["numero"] if data["tipoComprobante"] == "Factura" else cliente_data["numero"]
-                    nombre_cliente = cliente_data["nombre_o_razon_social"] if data["tipoComprobante"] == "Factura" else cliente_data["nombre_completo"]
-                    email_cliente = data.get("correo_cliente")
-                    telefono_cliente = data.get("telefono_cliente")
-                    direccion_cliente = data.get("direccion_cliente")
+            # =====================================================
+            # 2️⃣ SUNAT (FUERA DEL ATOMIC)
+            # =====================================================
+            try:
+                response = requests.post(
+                    php_backend_url,
+                    json=comprobante_data,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30,
+                )
+                response_json = response.json()
+            except Exception as e:
+                
+                return Response({"error": str(e)}, status=400)
 
-                    # 1️⃣ Verificar si ya existe el cliente
-                    cliente = Cliente.objects.filter(document=document, tienda=tienda).first()
+            cdr_codigo = response_json.get("cdr_codigo")
 
-                    if not cliente:
-                        # 2️⃣ Si no existe, crear uno nuevo
-                        serializer = ClienteSerializer(data={
-                            "document": document,
-                            "fullname": nombre_cliente,
-                            "email": email_cliente,
-                            "phone": telefono_cliente,
-                            "address": direccion_cliente,
-                        })
-
-                        if serializer.is_valid():
-                            cliente = serializer.save(tienda=tienda)
-                        else:
-                            print(serializer.errors)  # o maneja el error como desees
-                                      
-                    
-                    response_json = response.json()
-                    # guardar el comprobante 
-                    new_comprobante = ComprobanteElectronico.objects.create(
-                            venta=venta,
-                            tipo_comprobante=data["tipoComprobante"],
-                            serie=comprobante_data["serie"],
-                            correlativo=comprobante_data["correlativo"],
-                            moneda=comprobante_data["moneda"],
-                            gravadas=Decimal(comprobante_data["gravadas"]),
-                            igv=Decimal(comprobante_data["igv"]),
-                            valorVenta=Decimal(comprobante_data["valorVenta"]),
-                            sub_total=Decimal(comprobante_data["subTotal"]),
-                            total=Decimal(comprobante_data["total"]),
-                            leyenda=comprobante_data["leyenda"],
-                            tipo_documento_cliente=comprobante_data["cliente"]["tipoDoc"],
-                            numero_documento_cliente=comprobante_data["cliente"]["numDoc"],
-                            nombre_cliente=comprobante_data["cliente"]["nombre"],
-                            estado_sunat="Aceptado" if response_json["cdr_codigo"] == "0" else "Rechazado", # type: ignore
-                            xml_url=response_json.get("xml_url"), # type: ignore
-                            pdf_url=response_json.get("pdf_url"), # type: ignore
-                            cdr_url=response_json.get("cdr_url"), # type: ignore
-                            ticket_url=response_json.get("ticket_url"), # type: ignore
-                            items=comprobante_data["items"]
-                            
-                        )
-                    new_comprobante.save()
-                    venta.save()
-                    # Estructura JSON con toda la venta y sus productos
-                    comprobante_json = {
-                        "tipo_comprobante": new_comprobante.tipo_comprobante,
-                        "serie": new_comprobante.serie,
-                        "correlativo": new_comprobante.correlativo,
-                        "moneda": new_comprobante.moneda,
-                        "gravadas": float(new_comprobante.gravadas), # type: ignore
-                        "igv": float(new_comprobante.igv), # type: ignore
-                        "valorVenta": float(new_comprobante.valorVenta), # type: ignore
-                        "sub_total": float(new_comprobante.sub_total), # type: ignore
-                        "total": float(new_comprobante.total), # type: ignore
-                        "leyenda": new_comprobante.leyenda,
-                        "tipo_documento_cliente": new_comprobante.tipo_documento_cliente,
-                        "numero_documento_cliente": new_comprobante.numero_documento_cliente,
-                        "nombre_cliente": new_comprobante.nombre_cliente,
-                        "estado_sunat": new_comprobante.estado_sunat,
-                        "xml_url": new_comprobante.xml_url,
-                        "pdf_url": new_comprobante.pdf_url,
-                        "cdr_url": new_comprobante.cdr_url,
-                        "ticket_url": new_comprobante.ticket_url,
-                        "items": new_comprobante.items
-                    }
-                    venta_json = {
-                        "id": venta.id, # type: ignore
-                        "usuario":  usuario.id, # type: ignore
-                        "tienda": tienda.id, # type: ignore
-                        "metodo_pago": venta.metodo_pago,
-                        "tipo_comprobante": venta.tipo_comprobante,
-                        "metodo_pago" :venta.metodo_pago,
-                        "estado" :venta.estado,
-                        "activo" :venta.activo,
-                        
-                        "fecha_hora": venta.fecha_hora.isoformat(),
-                        "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
-                        "gravado_total": float(gravado_total),
-                        "igv_total": float(igv_total),
-                        "total": float(total),
-                        "productos_json": json.dumps(productos_registrados),
-                        "productos": productos_registrados,
-                        "comprobante_data":comprobante_data ,                
-                        "comprobante": comprobante_json                 
-                    }
+            if cdr_codigo == "0":
+                comprobante.estado_sunat = "ACEPTADO"
+                venta.estado = "ACEPTADO"
+            else:
+                comprobante.estado_sunat = "RECHAZADO"
+                venta.estado = "RECHAZADO"
+            comprobante.save(update_fields=["estado_sunat"])
+            venta.save(update_fields=["estado"])
+           
+            # Actualizar comprobante con URLs
+            comprobante.xml_url = response_json.get("xml_url")
+            comprobante.pdf_url = response_json.get("pdf_url")
+            comprobante.cdr_url = response_json.get("cdr_url")
+            comprobante.ticket_url = response_json.get("ticket_url")
+            comprobante.save(update_fields=["xml_url", "pdf_url", "cdr_url", "ticket_url"])
                     
                     
-                    return Response(venta_json, status=status.HTTP_201_CREATED)
-                else:
-                    return Response({"error": "Error al generar el comprobante", "detalle": response}, status=status.HTTP_400_BAD_REQUEST)
-          
+                    
+            # Comprobante de SUNAT (resumen con todos los detalles)
+            new_comprobante = comprobante 
+            comprobante_json = {
+                "tipo_comprobante": new_comprobante.tipo_comprobante,
+                "serie": new_comprobante.serie,
+                "correlativo": new_comprobante.correlativo,
+                "moneda": new_comprobante.moneda,
+                "gravadas": float(new_comprobante.gravadas), # type: ignore
+                "igv": float(new_comprobante.igv),# type: ignore
+                "valorVenta": float(new_comprobante.valorVenta),# type: ignore
+                "sub_total": float(new_comprobante.sub_total),# type: ignore
+                "total": float(new_comprobante.total),# type: ignore
+                "leyenda": new_comprobante.leyenda,
+                "tipo_documento_cliente": new_comprobante.tipo_documento_cliente,
+                "numero_documento_cliente": new_comprobante.numero_documento_cliente,
+                "nombre_cliente": new_comprobante.nombre_cliente,
+                "estado_sunat": new_comprobante.estado_sunat,
+                "xml_url": new_comprobante.xml_url,
+                "pdf_url": new_comprobante.pdf_url,
+                "cdr_url": new_comprobante.cdr_url,
+                "ticket_url": new_comprobante.ticket_url,
+                "items": new_comprobante.items,
+                "error_sunat": response_json.get("error"),
+            }
+
+            # Datos de la venta con productos y comprobante
+            venta_json = {
+                "id": venta.id,  # ID de la venta # type: ignore
+                "usuario": usuario.id,  # Usuario que realiza la venta
+                "tienda": tienda.id,  # Tienda donde se realizó la venta
+                "metodo_pago": venta.metodo_pago,  # Método de pago
+                "tipo_comprobante": venta.tipo_comprobante,  # Tipo de comprobante (Boleta/Factura)
+                "estado": venta.estado,  # Estado de la venta
+                "activo": venta.activo,  # Si la venta está activa o no
+
+                "fecha_hora": venta.fecha_hora.isoformat(),  # Fecha y hora de la venta
+                "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,  # Fecha de realización
+
+                "gravado_total": float(gravado_total),  # Total gravado
+                "igv_total": float(igv_total),  # Total IGV
+                "total": float(total),  # Total de la venta
+
+                # Productos registrados en la venta (lista de productos)
+                "productos_json": json.dumps(productos_registrados),
+                "productos": productos_registrados,  # Lista de productos
+
+                "comprobante_data": comprobante_data,  # Datos adicionales del comprobante
+                "comprobante": comprobante_json,  # Detalles completos del comprobante
+            }
+
+            # Respuesta con el detalle de la venta y comprobante
+            return Response(venta_json, status=status.HTTP_201_CREATED)
+
         except Exception as e:
-            
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(e)}, status=400)
+
 
 class GenerarComprobanteVentaView(APIView):
     permission_classes = [IsAuthenticated, CanMakeSalePermission]
@@ -477,8 +490,8 @@ class GenerarComprobanteVentaView(APIView):
                         "tipo_comprobante": venta.tipo_comprobante,
                         "estado": venta.estado,
                         "activo": venta.activo,
-                        "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
-                        "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
+                        "fecha_hora": venta.fecha_hora.isoformat(),
+                        "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
                         "subtotal": float(venta.subtotal),
                         "gravado_total": float(venta.gravado_total),
                         "igv_total": float(venta.igv_total),
@@ -611,8 +624,8 @@ class RegistrarVentaSinComprobanteView(APIView):
                     "tipo_comprobante": venta.tipo_comprobante,
                     "estado": venta.estado,
                     "activo": venta.activo,
-                    "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
-                    "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
+                    "fecha_hora": venta.fecha_hora.isoformat(),
+                    "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
                     "subtotal": float(subtotal),
                     "gravado_total": float(gravado_total),
                     "igv_total": float(igv_total),
@@ -633,265 +646,6 @@ class RegistrarVentaSinComprobanteView(APIView):
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-class RegistrarVentaAnonimaView(APIView):
-    permission_classes = [IsAuthenticated, CanMakeSalePermission]
-    
-    def post(self, request):
-        try:
-            data = request.data
-
-            # Validar datos obligatorios
-            if not all(k in data for k in ["usuarioId", "metodoPago", "tipoComprobante", "productos"]):
-                return Response({"error": "Faltan datos obligatorios"}, status=status.HTTP_400_BAD_REQUEST)
-
-            is_send_sunat = data.get("is_send_sunat", True)  # Por defecto True
-
-            def obtener_siguiente_serie_y_correlativoAnonimo():
-                serie_base = "B001"
-                ultimo_comprobante = ComprobanteElectronico.objects.filter(
-                    serie__startswith=serie_base
-                ).order_by('-serie', '-correlativo').first()
-
-                if ultimo_comprobante:
-                    serie_actual = ultimo_comprobante.serie
-                    correlativo_actual = int(ultimo_comprobante.correlativo) # type: ignore
-                    if correlativo_actual >= 99999999:
-                        nueva_serie = f"{serie_base[0]}{str(int(serie_actual[1:]) + 1).zfill(3)}" # type: ignore
-                        nuevo_correlativo = "00000001"
-                    else:
-                        nueva_serie = serie_actual
-                        nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
-                else:
-                    nueva_serie = serie_base
-                    nuevo_correlativo = "00000001"
-
-                return nueva_serie, nuevo_correlativo
-
-            tienda = request.user.tienda
-            usuario = request.user
-            fecha_hora_aware = timezone.now()
-
-            with transaction.atomic():
-                # Crear la venta
-                venta = Venta.objects.create(
-                    usuario=usuario,
-                    tienda=tienda,
-                    metodo_pago=data["metodoPago"],
-                    tipo_comprobante="Boleta",
-                    fecha_hora=fecha_hora_aware,
-                    estado="Pendiente" if not is_send_sunat else "Completada",  # Pendiente si no se envía a SUNAT
-                    tipo_documento_cliente="1",
-                    numero_documento_cliente="00000000",
-                    nombre_cliente="CONSUMIDOR FINAL"
-                )
-
-                subtotal = Decimal(0)
-                gravado_total = Decimal(0)
-                igv_total = Decimal(0)
-                total = Decimal(0)
-                exonerado_total = Decimal(0)
-                productos_registrados = []
-                productos_items_for_sunat = []
-
-                for item in data["productos"]:
-                    inventario = get_object_or_404(Inventario, id=item["inventarioId"])
-                    producto = inventario.producto
-                    cantidad = int(item["cantidad_final"])
-                    descuento = int(item["descuento"])
-                    precio_unitario_original = Decimal(inventario.costo_venta)   # type: ignore # Precio de venta final con IGV
-                    precio_unitario = Decimal(inventario.costo_venta)  - Decimal(descuento/int(item["cantidad_final"]))  # type: ignore
-                    porcentaje_igv = Decimal("18.00")
-                    valor_unitario = precio_unitario / (Decimal("1.00") + (porcentaje_igv / Decimal("100.00")))
-                    valor_venta = cantidad * valor_unitario
-                    igv = valor_venta * (porcentaje_igv / Decimal("100.00"))
-                    total_impuestos = igv
-
-                    VentaProducto.objects.create(
-                        venta=venta,
-                        producto=producto,
-                        cantidad=cantidad,
-                        valor_unitario=valor_unitario,
-                        valor_venta=valor_venta,
-                        base_igv=valor_venta,
-                        porcentaje_igv=porcentaje_igv,
-                        igv=igv,
-                        tipo_afectacion_igv="10",
-                        total_impuestos=total_impuestos,
-                        precio_unitario=precio_unitario,
-                        descuento=int(item["descuento"]),
-                                          costo_original=round(float(precio_unitario_original),2),
-                    )
-
-                    inventario.cantidad -= cantidad
-                    inventario.save()
-
-                    subtotal += valor_venta
-                    gravado_total += valor_venta
-                    igv_total += igv
-                    total += precio_unitario * cantidad
-
-                    productos_registrados.append({
-                        "producto_id": producto.id, # type: ignore
-                        "producto_nombre": producto.nombre,
-                        "cantidad": cantidad,
-                        "valor_unitario": float(valor_unitario),
-                        "valor_venta": float(valor_venta),
-                        "igv": float(igv),
-                        "precio_unitario": float(precio_unitario),
-                          "costo_original": float(precio_unitario_original),  # Con IGV,
-                            "descuento":round(float(descuento),2)  
-                    })
-
-                    # Solo preparar items para SUNAT si se va a enviar
-                    if is_send_sunat:
-                        productos_items_for_sunat.append({
-                            "codigo": producto.sku,
-                            "unidad": "NIU",
-                            "descripcion": producto.nombre,
-                            "cantidad": cantidad,
-                            "valorUnitario": round(float(valor_unitario), 2),
-                            "valorVenta": round(float(valor_venta), 2),
-                            "baseIgv": round(float(valor_venta), 2),
-                            "porcentajeIgv": 18,
-                            "igv": round(float(valor_venta * (porcentaje_igv / 100)), 2),
-                            "tipoAfectacionIgv": "10",
-                            "totalImpuestos": round(float(valor_venta * (porcentaje_igv / 100)), 2),
-                            "precioUnitario": round(float(precio_unitario), 2),
-                              "costo_original": float(precio_unitario_original),  # Con IGV,
-                            "descuento":round(float(descuento),2),
-                                                    "producto_imagen": producto.imagen.url if producto.imagen else None
-                        })
-
-                venta.subtotal = subtotal
-                venta.gravado_total = gravado_total
-                venta.igv_total = igv_total
-                venta.total = total
-                venta.productos_json = productos_registrados
-                venta.save()
-
-                comprobante_data = None
-                comprobante_json = None
-
-                # Solo generar y enviar comprobante si is_send_sunat es True
-                if is_send_sunat:
-                    # Generar serie y correlativo
-                    serie_generada, correlativo_generado = obtener_siguiente_serie_y_correlativoAnonimo()
-
-                    comprobante_data = {
-                        "serie": serie_generada,
-                        "correlativo": correlativo_generado,
-                        "moneda": "PEN",
-                        "gravadas": float(gravado_total),
-                        "exoneradas": float(exonerado_total),
-                        "igv": float(igv_total),
-                        "valorVenta": float(subtotal),
-                        "subTotal": float(subtotal + igv_total),
-                        "total": float(total),
-                        "leyenda": f"SON {num2words(total, lang='es').upper()} CON 00/100 SOLES",
-                        "cliente": {
-                            "tipoDoc": "01",
-                            "numDoc": "00000000",
-                            "nombre": "CONSUMIDOR FINAL"
-                        },
-                        "items": productos_items_for_sunat
-                    }
-
-                    # Enviar a SUNAT
-                    php_backend_url_boleta = SUNAT_PHP + "/src/api/boleta-post.php" # type: ignore
-                    headers = {"Content-Type": "application/json"}
-                    response = requests.post(php_backend_url_boleta, json=comprobante_data, headers=headers)
-
-                    try:
-                        response_json = response.json()
-                    except Exception:
-                        raise Exception(f"La API PHP devolvió una respuesta no JSON: {response.text}")
-
-                    estado_sunat = "Aceptado" if response_json.get("cdr_codigo") == "0" else "Rechazado"
-                    xml_url = response_json.get("xml_url")
-                    pdf_url = response_json.get("pdf_url")
-                    cdr_url = response_json.get("cdr_url")
-                    ticket_url = response_json.get("ticket_url")
-
-                    # Guardar comprobante
-                    new_comprobante = ComprobanteElectronico.objects.create(
-                        venta=venta,
-                        tipo_comprobante="03",
-                        serie=serie_generada,
-                        correlativo=correlativo_generado,
-                        moneda="PEN",
-                        gravadas=Decimal(comprobante_data["gravadas"]),
-                        igv=Decimal(comprobante_data["igv"]),
-                        valorVenta=Decimal(comprobante_data["valorVenta"]),
-                        sub_total=Decimal(comprobante_data["subTotal"]),
-                        total=Decimal(comprobante_data["total"]),
-                        leyenda=comprobante_data["leyenda"],
-                        tipo_documento_cliente=comprobante_data["cliente"]["tipoDoc"],
-                        numero_documento_cliente=comprobante_data["cliente"]["numDoc"],
-                        nombre_cliente=comprobante_data["cliente"]["nombre"],
-                        estado_sunat=estado_sunat,
-                        xml_url=xml_url,
-                        pdf_url=pdf_url,
-                        cdr_url=cdr_url,
-                        ticket_url=ticket_url,
-                        items=comprobante_data["items"]
-                    )
-                    new_comprobante.save()
-
-                    comprobante_json = {
-                        "tipo_comprobante": new_comprobante.tipo_comprobante,
-                        "serie": new_comprobante.serie,
-                        "correlativo": new_comprobante.correlativo,
-                        "moneda": new_comprobante.moneda,
-                        "gravadas": float(new_comprobante.gravadas), # type: ignore
-                        "igv": float(new_comprobante.igv), # type: ignore
-                        "valorVenta": float(new_comprobante.valorVenta), # type: ignore
-                        "sub_total": float(new_comprobante.sub_total), # type: ignore
-                        "total": float(new_comprobante.total), # type: ignore
-                        "leyenda": new_comprobante.leyenda,
-                        "tipo_documento_cliente": new_comprobante.tipo_documento_cliente,
-                        "numero_documento_cliente": new_comprobante.numero_documento_cliente,
-                        "nombre_cliente": new_comprobante.nombre_cliente,
-                        "estado_sunat": new_comprobante.estado_sunat,
-                        "xml_url": new_comprobante.xml_url,
-                        "pdf_url": new_comprobante.pdf_url,
-                        "cdr_url": new_comprobante.cdr_url,
-                        "ticket_url": new_comprobante.ticket_url,
-                        "items": new_comprobante.items
-                    }
-
-                    venta.estado = "Completada"
-                    venta.save()
-
-                # Construir respuesta
-                venta_json = {
-                    "id": venta.id, # type: ignore
-                    "usuario": usuario.id,
-                    "tienda": tienda.id,
-                    "metodo_pago": venta.metodo_pago,
-                    "tipo_comprobante": venta.tipo_comprobante,
-                    "estado": venta.estado,
-                    "activo": venta.activo,
-                    "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
-                    "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
-                    "subtotal": float(subtotal),
-                    "gravado_total": float(gravado_total),
-                    "igv_total": float(igv_total),
-                    "total": float(total),
-                    "productos_json": json.dumps(productos_registrados),
-                    "productos": productos_registrados,
-                    "comprobante_data": comprobante_data,
-                    "comprobante": comprobante_json,
-                    "tipo_documento_cliente": venta.tipo_documento_cliente,
-                    "numero_documento_cliente": venta.numero_documento_cliente,
-                    "nombre_cliente": venta.nombre_cliente
-                }
-
-                return Response(venta_json, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
 
 
 class CancelarVentaView(APIView):
@@ -947,7 +701,7 @@ class VentasResumenView(APIView):
         current_year = today.year
         
         # Filtrar ventas activas de la tienda
-        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True)
+        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0)
         
         # Ventas del día
         today_sales = ventas_activas.filter(fecha_hora__date=today).aggregate(total=Sum("total"))['total'] or 0
@@ -1008,7 +762,7 @@ class VentaSalesByDateView(APIView):
             current_date += timedelta(days=1)  # Avanzar al siguiente día
 
         # Filtrar las ventas en el rango de fechas
-        ventas = Venta.objects.filter(tienda=tienda_id, fecha_hora__gte=from_date_obj, fecha_hora__lte=to_date_obj)
+        ventas = Venta.objects.filter(total__gt=0,tienda=tienda_id, fecha_hora__gte=from_date_obj, fecha_hora__lte=to_date_obj)
 
         # Agrupar las ventas por fecha y calcular el total de ventas por fecha
         daily_sales = (
@@ -1049,7 +803,7 @@ class ProductosMasVendidosHoyView(APIView):
         # 🟩 2️⃣ Filtramos ventas solo de HOY
         ventas = Venta.objects.filter(
             tienda=tienda,
-            activo=True,
+            activo=True,total__gt=0,
             fecha_hora__range=(from_date, to_date)
         )
 
@@ -1092,7 +846,7 @@ class VentasPerDayOrMonth(APIView):
 
 
 
-        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True)
+        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0)
 
         today_sales = None
         this_month_sales = None
@@ -1148,7 +902,7 @@ class VentaBusquedaView(APIView):
             tienda_id = request.user.tienda
             query = request.data.get('query', {})
             ventas = Venta.objects.all()
-            ventas = ventas.filter(tienda_id=tienda_id)
+            ventas = ventas.filter(tienda_id=tienda_id,total__gt=0)
 
             # Filtro por fechas
             from_date = query.get('from_date')
@@ -1182,7 +936,7 @@ class VentaBusquedaView(APIView):
             ) 
             
             
-            ventas = ventas.filter(fecha_hora__range=(from_date_obj, to_date_obj))
+            ventas = ventas.filter(fecha_hora__range=(from_date_obj, to_date_obj),total__gt=0)
              
              
             
@@ -1199,20 +953,20 @@ class VentaBusquedaView(APIView):
             
             if metodo_pago  is not "":
                 print(metodo_pago)
-                ventas = ventas.filter(metodo_pago__icontains=metodo_pago)
+                ventas = ventas.filter(metodo_pago__icontains=metodo_pago,total__gt=0)
             if estado_sunat  is not "":
-                ventas = ventas.filter(comprobante__estado_sunat__icontains=estado_sunat)
+                ventas = ventas.filter(comprobante__estado_sunat__icontains=estado_sunat,total__gt=0)
             if tipo_comprobante  is not "":
-                ventas = ventas.filter(tipo_comprobante__icontains=tipo_comprobante) 
+                ventas = ventas.filter(tipo_comprobante__icontains=tipo_comprobante,total__gt=0)
             if numero_documento_cliente  is not "":
-                ventas = ventas.filter(comprobante__numero_documento_cliente__icontains=numero_documento_cliente)
+                ventas = ventas.filter(comprobante__numero_documento_cliente__icontains=numero_documento_cliente,total__gt=0)
             if numero_comprobante  is not "":
-                ventas = ventas.filter(comprobante__correlativo=numero_comprobante)
-            
+                ventas = ventas.filter(comprobante__correlativo=numero_comprobante,total__gt=0)
+
             if nombre_cliente  is not "":
-                ventas = ventas.filter(comprobante__nombre_cliente__icontains=nombre_cliente)
-                
-                
+                ventas = ventas.filter(comprobante__nombre_cliente__icontains=nombre_cliente,total__gt=0)
+
+
             total_ventas = ventas.count()
             paginator = VentaPagination()
             result_page = paginator.paginate_queryset(ventas, request)
@@ -1286,15 +1040,16 @@ class VentaBusquedaView(APIView):
                         "xml_url": nota_credito.xml_url,
                         "pdf_url": nota_credito.pdf_url,
                         "cdr_url": nota_credito.cdr_url,
-                        "fecha_emision": nota_credito.fecha_emision.strftime("%Y-%m-%d %H:%M:%S"),
+                        
+                                                "fecha_emision": nota_credito.fecha_emision.isoformat(),
                     }
                 ventas_json.append({
                     "id": venta.id,
                     "usuario": venta.usuario.id if venta.usuario else None,
                     "tienda": venta.tienda.id,
-                    "fecha_hora": venta.fecha_hora.strftime("%Y-%m-%d %H:%M:%S"),
-                    "fecha_realizacion": venta.fecha_realizacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_realizacion else None,
-                    "fecha_cancelacion": venta.fecha_cancelacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_cancelacion else None,
+                    "fecha_hora": venta.fecha_hora.isoformat(),
+                    "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
+                    "fecha_cancelacion": venta.fecha_cancelacion.isoformat() if venta.fecha_cancelacion else None,
                     "metodo_pago": venta.metodo_pago,
                     "estado": venta.estado,
                     "activo": venta.activo,
@@ -1346,7 +1101,7 @@ class VentasPorTiendaView(APIView):
                 hour=23, minute=59, second=59, microsecond=0, tzinfo=tz
             ) 
             ventas = Venta.objects.all()
-            ventas = ventas.filter(tienda_id=tienda_id,fecha_hora__range=(from_date_obj, to_date_obj))
+            ventas = ventas.filter(tienda_id=tienda_id,total__gt=0,fecha_hora__range=(from_date_obj, to_date_obj))
             
             
             total_ventas = ventas.count()
@@ -1422,7 +1177,7 @@ class VentasPorTiendaView(APIView):
                         "xml_url": nota_credito.xml_url,
                         "pdf_url": nota_credito.pdf_url,
                         "cdr_url": nota_credito.cdr_url,
-                        "fecha_emision": nota_credito.fecha_emision.strftime("%Y-%m-%d %H:%M:%S"),
+                        "fecha_emision": nota_credito.fecha_emision.isoformat(),
                     }
                 ventas_json.append({
                     "id": venta.id,
@@ -1430,7 +1185,7 @@ class VentasPorTiendaView(APIView):
                     "tienda": venta.tienda.id,
                     "fecha_hora": venta.fecha_hora.isoformat(),
                     "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
-                    "fecha_cancelacion": venta.fecha_cancelacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_cancelacion else None,
+                    "fecha_cancelacion": venta.fecha_cancelacion.isoformat() if venta.fecha_cancelacion else None,
                     "metodo_pago": venta.metodo_pago,
                     "estado": venta.estado,
                     "activo": venta.activo,
@@ -1495,7 +1250,7 @@ class VentasHoyView(APIView):
             to_date_obj   = datetime.combine(hoy, time(23, 59, 59, tzinfo=tz))
             # Filtrar ventas de hoy
             ventas = Venta.objects.filter(
-                tienda_id=tienda_id,
+                tienda_id=tienda_id,total__gt=0,
                 fecha_hora__range=(from_date_obj, to_date_obj)
             )
             
@@ -1564,7 +1319,8 @@ class VentasHoyView(APIView):
                         "xml_url": nota_credito.xml_url,
                         "pdf_url": nota_credito.pdf_url,
                         "cdr_url": nota_credito.cdr_url,
-                        "fecha_emision": nota_credito.fecha_emision.strftime("%Y-%m-%d %H:%M:%S"),
+                        
+                                                                        "fecha_emision": nota_credito.fecha_emision.isoformat(),
                     }
                 
                 ventas_json.append({
@@ -1573,7 +1329,7 @@ class VentasHoyView(APIView):
                     "tienda": venta.tienda.id, # type: ignore
                     "fecha_hora": venta.fecha_hora.isoformat(),
                     "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
-                    "fecha_cancelacion": venta.fecha_cancelacion.strftime("%Y-%m-%d %H:%M:%S") if venta.fecha_cancelacion else None,
+                    "fecha_cancelacion": venta.fecha_cancelacion.isoformat() if venta.fecha_cancelacion else None,
                     "metodo_pago": venta.metodo_pago,
                     "estado": venta.estado,
                     "activo": venta.activo,
