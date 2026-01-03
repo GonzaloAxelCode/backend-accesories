@@ -13,9 +13,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name='tienda',
-            name='encargado',
-            field=models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='tiendas_encargadas', to=settings.AUTH_USER_MODEL),
-        ),
+      
     ]

@@ -1062,9 +1062,6 @@ class VentaBusquedaView(APIView):
                 })
    
             
-            
-            
-            
             return Response({
                "count": total_ventas,
                 "next": next_page,
@@ -1225,13 +1222,6 @@ class VentasPorTiendaView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
-
-
-         
-            
-
-
 class VentasHoyView(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -1318,9 +1308,8 @@ class VentasHoyView(APIView):
                         "estado_sunat": nota_credito.estado_sunat,
                         "xml_url": nota_credito.xml_url,
                         "pdf_url": nota_credito.pdf_url,
-                        "cdr_url": nota_credito.cdr_url,
-                        
-                                                                        "fecha_emision": nota_credito.fecha_emision.isoformat(),
+                        "cdr_url": nota_credito.cdr_url, 
+                        "fecha_emision": nota_credito.fecha_emision.isoformat(),
                     }
                 
                 ventas_json.append({

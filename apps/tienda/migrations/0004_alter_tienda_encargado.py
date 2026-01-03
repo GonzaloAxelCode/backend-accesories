@@ -13,9 +13,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name='tienda',
-            name='encargado',
-            field=models.OneToOneField(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='tienda_encargada', to=settings.AUTH_USER_MODEL),
-        ),
+       
     ]

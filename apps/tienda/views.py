@@ -5,6 +5,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
+from rest_framework.parsers import MultiPartParser, FormParser
+from django.utils import timezone
 
 from core.permissions import IsSuperUser
 from .models import Tienda
@@ -12,7 +14,7 @@ from django.contrib.auth import get_user_model
 from .serializers import TiendaSerializer
 from rest_framework.permissions import IsAuthenticated
 User = get_user_model()
-class CreateTienda(APIView):
+class CreateTienda_old(APIView):
     permission_classes = [IsAuthenticated,IsSuperUser]
     
     def post(self, request):
@@ -23,6 +25,32 @@ class CreateTienda(APIView):
             )
 
         # 🔹 Validar si ya existe una tienda con el mismo nombre
+        nombre_tienda = request.data.get("nombre")
+        if Tienda.objects.filter(nombre__iexact=nombre_tienda).exists():
+            return Response(
+                {"error": f"Ya existe una tienda con el nombre '{nombre_tienda}'."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = TiendaSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+class CreateTienda(APIView):
+    permission_classes = [IsAuthenticated, IsSuperUser]
+    parser_classes = [MultiPartParser, FormParser]  # 👈 necesario para recibir archivos
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response(
+                {"error": "No tienes permisos para realizar esta acción."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Validar si ya existe una tienda con el mismo nombre
         nombre_tienda = request.data.get("nombre")
         if Tienda.objects.filter(nombre__iexact=nombre_tienda).exists():
             return Response(
@@ -111,20 +139,35 @@ class DeactivateTienda(APIView):
         )
 
 # Eliminar una tienda por ID
+from django.utils import timezone
+
+# Eliminar una tienda por ID
 class DeleteTienda(APIView):
-    permission_classes = [IsAuthenticated,IsSuperUser]
+    permission_classes = [IsAuthenticated, IsSuperUser]
 
     def delete(self, request, id):
         if not request.user.is_superuser:
-            return Response({"error": "No tienes permisos para realizar esta acción."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "No tienes permisos para realizar esta acción."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         tienda = get_object_or_404(Tienda, id=id)
+
+        # Obtener la fecha y hora actual
+        now = timezone.now()
+        fecha_str = now.strftime("%Y%m%d_%H%M%S")  # ejemplo: 20260103_071500
+
+        # Renombramos la tienda para liberar el nombre
+        tienda.nombre = f"{tienda.nombre}_deleted_{fecha_str}"
         tienda.is_deleted = True
         tienda.save()
+
+        # Desactivamos usuarios asociados
         User.objects.filter(tienda=tienda).update(is_active=False)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
-    
+
 
 # Habilitar una tienda eliminada por ID
 class HabilitarTiendaEliminada(APIView):

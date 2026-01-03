@@ -171,6 +171,8 @@ class ActualizarStock(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+
+
 # ---------- ACTUALIZAR INVENTARIO ----------
 class ActualizarInventarioView(APIView):
     permission_classes=[IsAuthenticated,CanModifyInventoryPermission]
@@ -188,8 +190,7 @@ class ActualizarInventarioView(APIView):
             nuevo_costo_venta = request.data.get("costo_venta")
 
             if nuevo_stock is not None:
-                if nuevo_stock < inventario.stock_minimo:
-                    return Response({"error": f"El stock no puede ser menor a {inventario.stock_minimo}"}, status=status.HTTP_400_BAD_REQUEST)
+
                 if nuevo_stock > inventario.stock_maximo:
                     return Response({"error": f"El stock no puede ser mayor a {inventario.stock_maximo}"}, status=status.HTTP_400_BAD_REQUEST)
                 inventario.cantidad = nuevo_stock
@@ -225,9 +226,7 @@ class VerificarStock(APIView):
             inventario = get_object_or_404(Inventario, id=inventario_id, tienda=tienda)
 
             stock_status = "Stock en nivel adecuado"
-            if inventario.cantidad < inventario.stock_minimo:
-                stock_status = "Stock bajo el mínimo permitido"
-            elif inventario.cantidad == 0:
+            if inventario.cantidad == 0:
                 stock_status = "Producto agotado"
 
             stock_info = {
