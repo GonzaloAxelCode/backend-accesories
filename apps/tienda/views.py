@@ -84,20 +84,34 @@ class GetTienda(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 # Actualizar una tienda por ID
-class UpdateTienda(APIView):
-    permission_classes = [IsAuthenticated,IsSuperUser]
+from rest_framework.parsers import MultiPartParser, FormParser
 
-    def put(self, request, id):
+class UpdateTienda(APIView):
+    permission_classes = [IsAuthenticated, IsSuperUser]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, id):
         if not request.user.is_superuser:
-            return Response({"error": "No tienes permisos para realizar esta acción."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "No tienes permisos para realizar esta acción."},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         tienda = get_object_or_404(Tienda, id=id)
-        serializer = TiendaSerializer(tienda, data=request.data, partial=True)
+
+        serializer = TiendaSerializer(
+            tienda,
+            data=request.data,
+            partial=True
+        )
+
         if serializer.is_valid():
+            if 'logo_img' in request.FILES and tienda.logo_img:
+                tienda.logo_img.delete(save=False)
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class DeactivateTienda(APIView):
     permission_classes = [IsAuthenticated,IsSuperUser]

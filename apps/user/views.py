@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 
 from apps.tienda.models import Tienda
+from apps.tienda.serializers import TiendaSerializer
 from core.permissions import IsSuperUser
 from .models import UserAccount
 from .serializers import CustomTokenObtainPairSerializer, UserAccountSerializer, UserSerializer
@@ -102,6 +103,7 @@ class GetAllUsersAPIView(APIView):
                 "all_permissions_meta": ALL_PERMISSIONS,
                 "tienda": user.tienda.id if user.tienda else None, # type: ignore
                 "tienda_nombre": user.tienda.nombre if user.tienda else None,
+                
             }
 
             users_data.append(user_data)
@@ -162,6 +164,13 @@ class GetCurrentUserAPIView(APIView):
         permissions_dict = {
             perm: perm in user_permission_codenames for perm in ALL_PERMISSIONS
         }
+        tienda_data = (
+            TiendaSerializer(
+                user.tienda,
+                context={"request": request}  # útil para URLs absolutas
+            ).data
+            if user.tienda else None
+        )
 
         # 🔹 5. Construir la respuesta
         response_data = {
@@ -181,6 +190,8 @@ class GetCurrentUserAPIView(APIView):
             'all_permissions_meta': ALL_PERMISSIONS,
             'tienda': user.tienda.id if user.tienda else None,  # type: ignore
             'tienda_nombre': user.tienda.nombre if user.tienda else None,
+            'tienda_data': tienda_data,
+
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
