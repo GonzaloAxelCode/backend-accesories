@@ -305,7 +305,8 @@ class RegistrarNotaCreditoView(APIView):
             # 🔹 Generar serie y correlativo SEGURO para NC (07)
             serie_nc, correlativo_nc = getNextCorrelativo(
                 tipo_comprobante="07",
-                correlativo_inicial_n=3
+                correlativo_inicial_n=3,
+                serie_base="F001" if tipo_comprobante_modifica == "01" else "B001"
             )
 
             fecha_emision = timezone.now()
