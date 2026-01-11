@@ -61,58 +61,44 @@ def getNextCorrelativo_ORIGINAL(tipo_comprobante: str,correlativo_inicial_f: int
                 return nueva_serie, nuevo_correlativo
 
 
-
-
 def getNextCorrelativo(
     tipo_comprobante: str,
+    serie_base: str | None = None,
     correlativo_inicial_f: int = 10,
     correlativo_inicial_b: int = 15,
     correlativo_inicial_n: int = 4,
 ):
     tipo = tipo_comprobante.lower()
 
-    # 🔹 Definir serie y correlativo inicial
+    # 🔹 FACTURA
     if tipo in ["factura", "01"]:
         serie_base = "F001"
         correlativo_inicial = correlativo_inicial_f
 
+    # 🔹 BOLETA
     elif tipo in ["boleta", "03"]:
         serie_base = "B001"
         correlativo_inicial = correlativo_inicial_b
 
+    # 🔹 NOTA DE CRÉDITO (07)
     elif tipo in ["nota_credito", "07"]:
-        serie_base = "NC01"
+        if not serie_base:
+            raise ValueError("Para nota de crédito se requiere la serie base (B001 o F001)")
         correlativo_inicial = correlativo_inicial_n
 
     else:
         raise ValueError("Tipo de comprobante no soportado")
 
-    # 🔹 Buscar último comprobante de esa serie
     ultimo = (
         ComprobanteElectronico.objects
-        .filter(serie__startswith=serie_base)
-        .order_by('-serie', '-correlativo')
+        .filter(serie=serie_base, tipo_comprobante="07")
+        .order_by("-correlativo")
         .first()
     )
 
-    # 🔹 Si existe comprobante previo
     if ultimo:
-        serie_actual = ultimo.serie
-        correlativo_actual = int(ultimo.correlativo) # type: ignore
-
-        if correlativo_actual >= 99999999:
-            nueva_serie = (
-                f"{serie_base[:2]}"
-                f"{str(int(serie_actual[2:]) + 1).zfill(2)}" # type: ignore
-            )
-            nuevo_correlativo = "00000001"
-        else:
-            nueva_serie = serie_actual
-            nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
-
-    # 🔹 Primer comprobante de ese tipo
+        nuevo_correlativo = str(int(ultimo.correlativo) + 1).zfill(8) # type: ignore
     else:
-        nueva_serie = serie_base
         nuevo_correlativo = str(correlativo_inicial).zfill(8)
 
-    return nueva_serie, nuevo_correlativo
+    return serie_base, nuevo_correlativo
