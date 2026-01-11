@@ -32,6 +32,7 @@ import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from apps.venta.utils import getNextCorrelativo
 from core.permissions import CanCancelSalePermission, CanMakeSalePermission
 from core.settings import SUNAT_PHP
 from rest_framework.permissions import IsAuthenticated
@@ -136,7 +137,7 @@ class ConsultaDocumentoView(APIView):
 }
     """
 
-class RegistrarNotaCreditoView(APIView):
+class RegistrarNotaCreditoView_AFTER(APIView):
     permission_classes = [IsAuthenticated, CanCancelSalePermission]  
     def post(self, request):
         try:
@@ -270,3 +271,137 @@ class RegistrarNotaCreditoView(APIView):
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class RegistrarNotaCreditoView(APIView):
+    permission_classes = [IsAuthenticated, CanCancelSalePermission]
+
+    def post(self, request):
+        try:
+            data = request.data
+
+            # 🔹 Validación básica
+            if "venta_id" not in data or "motivo" not in data or "tipo_motivo" not in data:
+                return Response(
+                    {"error": "Faltan campos obligatorios (venta_id, motivo, tipo_motivo)"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            venta = get_object_or_404(Venta, id=data["venta_id"])
+            comprobante = get_object_or_404(ComprobanteElectronico, venta=venta)
+
+            # 🔹 Evitar duplicar NC
+            if NotaCreditoDB.objects.filter(venta=venta).exists():
+                return Response(
+                    {"error": "Ya existe una nota de crédito para esta venta"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # 🔹 Tipo de comprobante que se modifica
+            tipo_comprobante_modifica = (
+                "01" if comprobante.tipo_comprobante.lower() == "factura" else "03"
+            )
+
+            # 🔹 Generar serie y correlativo SEGURO para NC (07)
+            serie_nc, correlativo_nc = getNextCorrelativo(
+                tipo_comprobante="07",
+                correlativo_inicial_n=3
+            )
+
+            fecha_emision = timezone.now()
+
+            # 🔹 Cliente
+            if data.get("anonima"):
+                cliente = {
+                    "tipoDoc": "1",
+                    "numDoc": "00000000",
+                    "nombre": "CLIENTE ANÓNIMO"
+                }
+            else:
+                cliente = {
+                    "tipoDoc": comprobante.tipo_documento_cliente,
+                    "numDoc": comprobante.numero_documento_cliente,
+                    "nombre": comprobante.nombre_cliente,
+                }
+
+            # 🔹 JSON para backend PHP
+            comprobante_data = {
+                "tipo_comprobante": "07",
+                "serie": serie_nc,
+                "correlativo": correlativo_nc,
+                "fechaEmision": fecha_emision.strftime("%Y-%m-%dT%H:%M:%S"),
+                "moneda": comprobante.moneda,
+                "total": round(float(comprobante.total or 0), 2),
+                "gravadas": round(float(comprobante.gravadas or 0), 2),
+                "igv": round(float(comprobante.igv or 0), 2),
+                "motivo": data["motivo"],
+                "tipo_motivo": data["tipo_motivo"],
+                "comprobante_modifica": {
+                    "tipo": tipo_comprobante_modifica,
+                    "serie": comprobante.serie,
+                    "correlativo": comprobante.correlativo,
+                },
+                "cliente": cliente,
+                "items": comprobante.items,
+            }
+
+            php_backend_url = f"{SUNAT_PHP}/src/api/nota-credito-post.php"
+            response = requests.post(
+                php_backend_url,
+                json=comprobante_data,
+                headers={"Content-Type": "application/json"},
+                timeout=20
+            )
+
+            if response.status_code != 200:
+                return Response(
+                    {"error": "Error al enviar NC al backend PHP", "detalle": response.text},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            response_json = response.json()
+            estado_sunat = "Aceptado" if response_json.get("cdr_codigo") == "0" else "Rechazado"
+
+            if estado_sunat == "Rechazado":
+                return Response({
+                    "error": "SUNAT rechazó la nota de crédito",
+                    "sunat_response": response_json
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # 🔹 Guardar SOLO si fue aceptada
+            with transaction.atomic():
+                nota = NotaCreditoDB.objects.create(
+                    venta=venta,
+                    comprobante_modificado=comprobante,
+                    serie=serie_nc,
+                    correlativo=correlativo_nc,
+                    tipo_comprobante_modifica=tipo_comprobante_modifica,
+                    serie_modifica=comprobante.serie,
+                    correlativo_modifica=comprobante.correlativo,
+                    tipo_motivo=data["tipo_motivo"],
+                    motivo=data["motivo"],
+                    total=comprobante.total,
+                    estado_sunat=estado_sunat,
+                    xml_url=response_json.get("xml_url"),
+                    pdf_url=response_json.get("pdf_url"),
+                    cdr_url=response_json.get("cdr_url"),
+                )
+
+                venta.estado = "ANULADA"
+                venta.save(update_fields=["estado"])
+
+            return Response({
+                "message": "Nota de crédito generada y aceptada por SUNAT",
+                "nota_credito": {
+                    "serie": nota.serie,
+                    "correlativo": nota.correlativo,
+                    "estado_sunat": nota.estado_sunat,
+                },
+                "venta_estado": venta.estado,
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

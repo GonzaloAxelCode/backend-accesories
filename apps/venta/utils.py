@@ -27,7 +27,7 @@ def generateLeyend(monto):
     return f"SON {num2words(monto, lang='es').upper()} CON 00/100 SOLES"
 
 
-def getNextCorrelativo(tipo_comprobante: str,correlativo_inicial_f: int = 10,correlativo_inicial_b: int =15,correlativo_inicial_n: int = 4):
+def getNextCorrelativo_ORIGINAL(tipo_comprobante: str,correlativo_inicial_f: int = 10,correlativo_inicial_b: int =15,correlativo_inicial_n: int = 4):
                 tipo = tipo_comprobante.lower()
                 if tipo == "factura":
                     serie_base = "F001"
@@ -59,3 +59,60 @@ def getNextCorrelativo(tipo_comprobante: str,correlativo_inicial_f: int = 10,cor
                     nuevo_correlativo = str(correlativo_inicial).zfill(8)
 
                 return nueva_serie, nuevo_correlativo
+
+
+
+
+def getNextCorrelativo(
+    tipo_comprobante: str,
+    correlativo_inicial_f: int = 10,
+    correlativo_inicial_b: int = 15,
+    correlativo_inicial_n: int = 4,
+):
+    tipo = tipo_comprobante.lower()
+
+    # 🔹 Definir serie y correlativo inicial
+    if tipo in ["factura", "01"]:
+        serie_base = "F001"
+        correlativo_inicial = correlativo_inicial_f
+
+    elif tipo in ["boleta", "03"]:
+        serie_base = "B001"
+        correlativo_inicial = correlativo_inicial_b
+
+    elif tipo in ["nota_credito", "07"]:
+        serie_base = "NC01"
+        correlativo_inicial = correlativo_inicial_n
+
+    else:
+        raise ValueError("Tipo de comprobante no soportado")
+
+    # 🔹 Buscar último comprobante de esa serie
+    ultimo = (
+        ComprobanteElectronico.objects
+        .filter(serie__startswith=serie_base)
+        .order_by('-serie', '-correlativo')
+        .first()
+    )
+
+    # 🔹 Si existe comprobante previo
+    if ultimo:
+        serie_actual = ultimo.serie
+        correlativo_actual = int(ultimo.correlativo) # type: ignore
+
+        if correlativo_actual >= 99999999:
+            nueva_serie = (
+                f"{serie_base[:2]}"
+                f"{str(int(serie_actual[2:]) + 1).zfill(2)}" # type: ignore
+            )
+            nuevo_correlativo = "00000001"
+        else:
+            nueva_serie = serie_actual
+            nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
+
+    # 🔹 Primer comprobante de ese tipo
+    else:
+        nueva_serie = serie_base
+        nuevo_correlativo = str(correlativo_inicial).zfill(8)
+
+    return nueva_serie, nuevo_correlativo
