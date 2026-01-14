@@ -51,7 +51,7 @@ from apps.venta.serialzers import VentaSerializer
 from core.permissions import CanCancelSalePermission, CanMakeSalePermission, IsSuperUser
 from core.settings import SUNAT_PHP
 from .models import Venta, VentaProducto, Tienda, Producto
-from apps.venta.utils import generateLeyend, getNextCorrelativo, normalize_date
+from apps.venta.utils import generateLeyend, getNextCorrelativo, getNextCorrelativo_ORIGINAL, normalize_date
 
 
 from django.contrib.auth import get_user_model
@@ -203,7 +203,7 @@ class RegistrarVentaView(APIView):
                 venta.save()
 
                 leyenda = generateLeyend(total)
-                serie, correlativo = getNextCorrelativo(data["tipoComprobante"])
+                serie, correlativo = getNextCorrelativo_ORIGINAL(data["tipoComprobante"],correlativo_inicial_b=68)
 
                 comprobante_data = {
                     "serie": serie,
