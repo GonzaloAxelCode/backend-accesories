@@ -32,7 +32,7 @@ import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from apps.venta.utils import getNextCorrelativo
+from apps.venta.utils import getNextCorrelativo, getNextCorrelativoNotaCredito
 from core.permissions import CanCancelSalePermission, CanMakeSalePermission
 from core.settings import SUNAT_PHP
 from rest_framework.permissions import IsAuthenticated
@@ -303,10 +303,10 @@ class RegistrarNotaCreditoView(APIView):
             )
 
             # 🔹 Generar serie y correlativo SEGURO para NC (07)
-            serie_nc, correlativo_nc = getNextCorrelativo(
-                tipo_comprobante="07",
-                correlativo_inicial_n=3,
-                serie_base="F001" if tipo_comprobante_modifica == "01" else "B001"
+            serie_nc, correlativo_nc = getNextCorrelativoNotaCredito(
+                tipo_comprobante_afectado=comprobante.tipo_comprobante.lower(),
+                
+                
             )
 
             fecha_emision = timezone.now()

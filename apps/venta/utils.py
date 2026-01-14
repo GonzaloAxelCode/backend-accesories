@@ -102,3 +102,44 @@ def getNextCorrelativo(
         nuevo_correlativo = str(correlativo_inicial).zfill(8)
 
     return serie_base, nuevo_correlativo
+
+
+def getNextCorrelativoNotaCredito(
+    tipo_comprobante_afectado: str,
+    correlativo_inicial: int = 4
+):
+    tipo = tipo_comprobante_afectado.lower()
+
+    if tipo == "factura":
+        serie_base = "F001"
+    elif tipo == "boleta":
+        serie_base = "B001"
+    else:
+        raise ValueError("Tipo de comprobante inválido para Nota de Crédito")
+
+    ultimo = (
+        ComprobanteElectronico.objects
+        .filter(
+            tipo_comprobante="07",  # Nota de crédito
+            serie__startswith=serie_base
+        )
+        .order_by('-serie', '-correlativo')
+        .first()
+    )
+
+    if ultimo:
+        serie_actual = ultimo.serie
+        correlativo_actual = int(ultimo.correlativo) # type: ignore
+
+        if correlativo_actual >= 99999999:
+            # F001 -> F002 | B001 -> B002
+            nueva_serie = f"{serie_base[0]}{str(int(serie_actual[1:]) + 1).zfill(3)}" # type: ignore
+            nuevo_correlativo = "00000001"
+        else:
+            nueva_serie = serie_actual
+            nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
+    else:
+        nueva_serie = serie_base
+        nuevo_correlativo = str(correlativo_inicial).zfill(8)
+
+    return nueva_serie, nuevo_correlativo
