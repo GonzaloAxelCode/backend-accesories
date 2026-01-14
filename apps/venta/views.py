@@ -701,7 +701,7 @@ class VentasResumenView(APIView):
         current_year = today.year
         
         # Filtrar ventas activas de la tienda
-        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0)
+        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0,    comprobante__estado_sunat__in=["ACEPTADO", "ANULADO","PENDIENTE"])
         
         # Ventas del día
         today_sales = ventas_activas.filter(fecha_hora__date=today).aggregate(total=Sum("total"))['total'] or 0
@@ -762,7 +762,7 @@ class VentaSalesByDateView(APIView):
             current_date += timedelta(days=1)  # Avanzar al siguiente día
 
         # Filtrar las ventas en el rango de fechas
-        ventas = Venta.objects.filter(total__gt=0,tienda=tienda_id, fecha_hora__gte=from_date_obj, fecha_hora__lte=to_date_obj)
+        ventas = Venta.objects.filter(total__gt=0,tienda=tienda_id, fecha_hora__gte=from_date_obj, fecha_hora__lte=to_date_obj,comprobante__estado_sunat__in=["ACEPTADO", "ANULADO","PENDIENTE"])
 
         # Agrupar las ventas por fecha y calcular el total de ventas por fecha
         daily_sales = (
@@ -808,7 +808,7 @@ class ProductosMasVendidosHoyView(APIView):
         )
 
         # 🟧 3️⃣ Obtener productos de esas ventas
-        venta_productos = VentaProducto.objects.filter(venta__in=ventas)
+        venta_productos = VentaProducto.objects.filter(venta__in=ventas,comprobante__estado_sunat__in=["ACEPTADO", "ANULADO","PENDIENTE"])
 
         # 🟥 4️⃣ Contar por producto
         contador = Counter()
@@ -846,7 +846,7 @@ class VentasPerDayOrMonth(APIView):
 
 
 
-        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0)
+        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0,comprobante__estado_sunat__in=["ACEPTADO", "ANULADO","PENDIENTE"])
 
         today_sales = None
         this_month_sales = None
