@@ -5,7 +5,7 @@ from django.utils.timezone import make_aware
 
 from num2words import num2words
 
-from apps.comprobante.models import ComprobanteElectronico  
+from apps.comprobante.models import ComprobanteElectronico, NotaCreditoDB  
 def normalize_date(value, end_of_day=False):
     if isinstance(value, str):
         d = parse_date(value)
@@ -103,43 +103,40 @@ def getNextCorrelativo(
 
     return serie_base, nuevo_correlativo
 
-
 def getNextCorrelativoNotaCredito(
-    tipo_comprobante_afectado: str,
-    correlativo_inicial: int = 5
+    tipo_comprobante_modifica: str,
+    correlativo_inicial: int = 6
 ):
-    tipo = tipo_comprobante_afectado.lower()
+    tipo = tipo_comprobante_modifica.lower()
 
     if tipo == "factura":
         serie_base = "F001"
     elif tipo == "boleta":
         serie_base = "B001"
     else:
-        raise ValueError("Tipo de comprobante inválido para Nota de Crédito")
+        raise ValueError("Tipo de comprobante inválido")
 
     ultimo = (
-        ComprobanteElectronico.objects
-        .filter(
-            tipo_comprobante="07",  # Nota de crédito
-            serie__startswith=serie_base
-        )
-        .order_by('-serie', '-correlativo')
+        NotaCreditoDB.objects
+        .filter(serie=serie_base)
+        .order_by('-correlativo')
         .first()
     )
 
     if ultimo:
-        serie_actual = ultimo.serie
-        correlativo_actual = int(ultimo.correlativo) # type: ignore
+        correlativo_actual = int(ultimo.correlativo)
 
         if correlativo_actual >= 99999999:
-            # F001 -> F002 | B001 -> B002
-            nueva_serie = f"{serie_base[0]}{str(int(serie_actual[1:]) + 1).zfill(3)}" # type: ignore
-            nuevo_correlativo = "00000001"
-        else:
-            nueva_serie = serie_actual
-            nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
+            raise ValueError(
+                f"Correlativo máximo alcanzado para la serie {serie_base}"
+            )
+
+        nueva_serie = serie_base
+        nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
+
     else:
         nueva_serie = serie_base
         nuevo_correlativo = str(correlativo_inicial).zfill(8)
 
     return nueva_serie, nuevo_correlativo
+

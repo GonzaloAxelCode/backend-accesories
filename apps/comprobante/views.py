@@ -177,7 +177,7 @@ class RegistrarNotaCreditoView(APIView):
 
             # 🔹 Serie y correlativo NC (07)
             serie_nc, correlativo_nc = getNextCorrelativoNotaCredito(
-                tipo_comprobante_afectado=comprobante.tipo_comprobante.lower()
+                tipo_comprobante_modifica=comprobante.tipo_comprobante.lower()
             )
 
             fecha_emision = timezone.now()
