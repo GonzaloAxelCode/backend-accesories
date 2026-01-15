@@ -106,7 +106,7 @@ def getNextCorrelativo(
 
 def getNextCorrelativoNotaCredito(
     tipo_comprobante_afectado: str,
-    correlativo_inicial: int = 4
+    correlativo_inicial: int = 5
 ):
     tipo = tipo_comprobante_afectado.lower()
 

@@ -3,7 +3,8 @@ from apps.venta.models import Venta
 from django.utils import timezone
 class ComprobanteElectronico(models.Model):
     venta = models.OneToOneField(
-        Venta, on_delete=models.CASCADE, related_name='comprobante'
+        Venta, on_delete=models.CASCADE, related_name='comprobante',
+        
     )
     tipo_comprobante = models.CharField(max_length=10)
     serie = models.CharField(max_length=4, null=True)  # Ejemplo: B001 o F001
@@ -25,7 +26,7 @@ class ComprobanteElectronico(models.Model):
     xml_firmado = models.TextField(blank=True, null=True)  # Guarda el XML firmado
     codigo_hash = models.CharField(max_length=100, blank=True, null=True)
     cdr_respuesta = models.TextField(blank=True, null=True)  # Respuesta de SUNAT
-    estado_sunat = models.CharField(max_length=50, default='Pendiente', null=True)  # Pendiente, Aceptado, Rechazado
+    estado_sunat = models.CharField(max_length=50, default='PENDIENTE', null=True)  # Pendiente, Aceptado, Rechazado
     
     # URLs de documentos generados
     xml_url = models.URLField(max_length=500, null=True, blank=True)

@@ -3,7 +3,15 @@ from django.db import models
 from apps.tienda.models import Tienda
 
 class Cliente(models.Model):
-    document = models.CharField(max_length=8, unique=True,null=True, blank=True)  # Número de DNI
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document", "tienda"],
+                name="unique_document_by_tienda"
+            )
+        ]
+
+    document = models.CharField(max_length=8, null=True, blank=True)  # Número de DNI
     fullname = models.CharField(max_length=255,null=True, blank=True)  # Nombre completo
     firstname = models.CharField(max_length=100,null=True, blank=True)  # Nombre(s)
     lastname = models.CharField(max_length=100,null=True, blank=True)  # Apellido(s)

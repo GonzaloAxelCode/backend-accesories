@@ -77,6 +77,27 @@ class RegistrarVentaView(APIView):
             tienda = request.user.tienda
             usuario = request.user
             cliente_data = data["cliente"]
+            if cliente_data:
+                documento = (
+                    cliente_data.get("numero")
+                    or cliente_data.get("ruc")
+                    or data.get("documento_cliente")
+                )
+
+                if documento:
+                    Cliente.objects.get_or_create(
+                        document=documento,
+                        tienda=tienda,
+                        defaults={
+                            "fullname": cliente_data.get("nombre_completo"),
+                            "firstname": cliente_data.get("nombre_o_razon_social"),
+                            "address": data.get("direccion_cliente"),
+                            "phone": data.get("telefono_cliente"),
+                            "email": data.get("correo_cliente"),
+                        }
+                    ) 
+                    
+                            
             if not cliente_data:
                         cliente_data = {
                             "numero": "00000000",  # Documento ficticio
@@ -86,6 +107,7 @@ class RegistrarVentaView(APIView):
                             "telefono_cliente": None,
                             "direccion_cliente": None
                         }
+        
             fecha_hora = timezone.now()
 
             productos_registrados = []

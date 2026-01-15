@@ -218,7 +218,7 @@ class CreateProductoAPIView(APIView):
                 descripcion="Descripción",
                 cantidad=1,
                 stock_minimo=1,
-                stock_maximo=500,
+                stock_maximo=15000,
                 costo_compra=0.00,
                 costo_venta=0.00,
                 costo=0.00,

@@ -191,8 +191,6 @@ class ActualizarInventarioView(APIView):
 
             if nuevo_stock is not None:
 
-                if nuevo_stock > inventario.stock_maximo:
-                    return Response({"error": f"El stock no puede ser mayor a {inventario.stock_maximo}"}, status=status.HTTP_400_BAD_REQUEST)
                 inventario.cantidad = nuevo_stock
 
             if nuevo_costo_compra is not None:
