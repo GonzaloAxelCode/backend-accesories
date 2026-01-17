@@ -830,7 +830,11 @@ class ProductosMasVendidosHoyView(APIView):
         )
 
         # 🟧 3️⃣ Obtener productos de esas ventas
-        venta_productos = VentaProducto.objects.filter(venta__in=ventas,comprobante__estado_sunat__in=["ACEPTADO", "ANULADO","PENDIENTE"])
+        
+        venta_productos = VentaProducto.objects.filter(
+            venta__in=ventas,
+            venta__comprobante__estado_sunat__in=["ACEPTADO", "ANULADO", "PENDIENTE"]
+        )
 
         # 🟥 4️⃣ Contar por producto
         contador = Counter()

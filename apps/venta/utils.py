@@ -113,6 +113,8 @@ def getNextCorrelativoNotaCredito(
         serie_base = "F001"
     elif tipo == "boleta":
         serie_base = "B001"
+    elif tipo == "anonima":
+        serie_base = "B001"
     else:
         raise ValueError("Tipo de comprobante inválido")
 
