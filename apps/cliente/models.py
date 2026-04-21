@@ -11,7 +11,7 @@ class Cliente(models.Model):
             )
         ]
 
-    document = models.CharField(max_length=8, null=True, blank=True)  # Número de DNI
+    document = models.CharField(max_length=11, null=True, blank=True)  # Número de DNI
     fullname = models.CharField(max_length=255,null=True, blank=True)  # Nombre completo
     firstname = models.CharField(max_length=100,null=True, blank=True)  # Nombre(s)
     lastname = models.CharField(max_length=100,null=True, blank=True)  # Apellido(s)
