@@ -1382,6 +1382,7 @@ class VentasHoyView(APIView):
 
 
 
+
 class ProductosMasVendidosResumenView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1395,70 +1396,69 @@ class ProductosMasVendidosResumenView(APIView):
         start_today = make_aware(datetime.combine(today, time.min))
         end_today   = make_aware(datetime.combine(today, time.max))
 
-        start_week = make_aware(datetime.combine(today - timedelta(days=today.weekday()), time.min))
-        end_week   = end_today
+        start_week = make_aware(datetime.combine(
+            today - timedelta(days=today.weekday()), time.min
+        ))
+        end_week = end_today
 
-        start_month = make_aware(datetime.combine(today.replace(day=1), time.min))
-        end_month   = end_today
+        start_month = make_aware(datetime.combine(
+            today.replace(day=1), time.min
+        ))
+        end_month = end_today
 
-        start_year = make_aware(datetime.combine(today.replace(month=1, day=1), time.min))
-        end_year   = end_today
+        start_year = make_aware(datetime.combine(
+            today.replace(month=1, day=1), time.min
+        ))
+        end_year = end_today
 
         # ─────────────────────────────────────────────
-        # 🔁 FUNCION REUTILIZABLE
+        # ⚡ FUNCIÓN OPTIMIZADA (SIN LOOPS)
         # ─────────────────────────────────────────────
         def get_data(from_date, to_date):
-            ventas = Venta.objects.filter(
-                tienda=tienda,
-                activo=True,
-                total__gt=0,
-                fecha_hora__range=(from_date, to_date)
+            qs = (
+                VentaProducto.objects
+                .filter(
+                    venta__tienda=tienda,
+                    venta__activo=True,
+                    venta__total__gt=0,
+                    venta__fecha_hora__range=(from_date, to_date),
+                    venta__comprobante__estado_sunat__in=["ACEPTADO", "ANULADO"],
+                    producto__isnull=False
+                )
+                .values(
+                    "producto__id",
+                    "producto__nombre",
+                    "producto__precio",
+                    "producto__inventario__stock",
+                    "producto__inventario__stock_minimo"
+                )
+                .annotate(
+                    cantidad_total_vendida=Coalesce(Sum("cantidad"), 0),
+                    total_vendido=Coalesce(Sum(F("cantidad") * F("precio")), 0)
+                )
+                .order_by("-cantidad_total_vendida")
             )
 
-            venta_productos = VentaProducto.objects.select_related(
-                "producto",
-                "producto__inventario"
-            ).filter(
-                venta__in=ventas,
-                venta__comprobante__estado_sunat__in=["ACEPTADO", "ANULADO"]
-            )
-
-            data = {}
-
-            for vp in venta_productos:
-                if not vp.producto:
-                    continue
-
-                prod_id = vp.producto.id
-
-                if prod_id not in data:
-                    data[prod_id] = {
-                        "producto": {
-                            "id": vp.producto.id,
-                            "nombre": vp.producto.nombre,
-                            "precio": vp.producto.precio if hasattr(vp.producto, 'precio') else None,
-                        },
-                        "inventario": None,
-                        "cantidad_total_vendida": 0,
-                        "total_vendido": 0
-                    }
-
-                    # inventario (si existe)
-                    if hasattr(vp.producto, "inventario") and vp.producto.inventario:
-                        data[prod_id]["inventario"] = {
-                            "stock": vp.producto.inventario.stock,
-                            "stock_minimo": getattr(vp.producto.inventario, "stock_minimo", None)
+            return [
+                {
+                    "producto": {
+                        "id": item["producto__id"],
+                        "nombre": item["producto__nombre"],
+                        "precio": item["producto__precio"],
+                    },
+                    "inventario": (
+                        {
+                            "stock": item["producto__inventario__stock"],
+                            "stock_minimo": item["producto__inventario__stock_minimo"],
                         }
-
-                # acumulados
-                data[prod_id]["cantidad_total_vendida"] += vp.cantidad
-                data[prod_id]["total_vendido"] += (vp.cantidad * vp.precio)
-
-            # ordenar
-            result = list(data.values())
-            result.sort(key=lambda x: x["cantidad_total_vendida"], reverse=True)
-
-            return result
+                        if item["producto__inventario__stock"] is not None
+                        else None
+                    ),
+                    "cantidad_total_vendida": item["cantidad_total_vendida"],
+                    "total_vendido": item["total_vendido"],
+                }
+                for item in qs
+            ]
 
         # ─────────────────────────────────────────────
         # 📊 RESPUESTA FINAL
