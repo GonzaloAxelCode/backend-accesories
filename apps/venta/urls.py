@@ -12,6 +12,7 @@ urlpatterns = [
     path('ventas/resumen/', VentasResumenView.as_view(), name='ventas-resumen'),
     path('sales-by-date/', VentaSalesByDateView.as_view(), name='venta-sales-by-date'),
     path('ventas/top-productos-vendidos-hoy/', ProductosMasVendidosHoyView.as_view(), name='top-productos-vendidos_hoy'),
+    path('ventas/top-productos-vendidos/', ProductosMasVendidosResumenView.as_view(), name='top-productos-vendidos_resumen'),
     path('ventas/resumenbymonthorday/', VentasPerDayOrMonth.as_view(), name='ventas-resumen-bymonthorday'),
     path("ventas/search/",VentaBusquedaView.as_view(),name="Venta Busqueda"),
     path('ventas/generar-comprobante/', GenerarComprobanteVentaView.as_view(), name='generar-comprobante'),

@@ -23,6 +23,12 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from django.utils.timezone import make_aware, get_current_timezone
 
+from datetime import datetime, time, timedelta
+from collections import defaultdict
+from django.utils.timezone import make_aware, now
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 
 from decimal import Decimal
 from datetime import datetime, timedelta
@@ -1371,3 +1377,95 @@ class VentasHoyView(APIView):
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+class ProductosMasVendidosResumenView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        tienda = request.user.tienda
+        today = now().date()
+
+        # ─────────────────────────────────────────────
+        # 📅 RANGOS DE FECHA
+        # ─────────────────────────────────────────────
+        start_today = make_aware(datetime.combine(today, time.min))
+        end_today   = make_aware(datetime.combine(today, time.max))
+
+        start_week = make_aware(datetime.combine(today - timedelta(days=today.weekday()), time.min))
+        end_week   = end_today
+
+        start_month = make_aware(datetime.combine(today.replace(day=1), time.min))
+        end_month   = end_today
+
+        start_year = make_aware(datetime.combine(today.replace(month=1, day=1), time.min))
+        end_year   = end_today
+
+        # ─────────────────────────────────────────────
+        # 🔁 FUNCION REUTILIZABLE
+        # ─────────────────────────────────────────────
+        def get_data(from_date, to_date):
+            ventas = Venta.objects.filter(
+                tienda=tienda,
+                activo=True,
+                total__gt=0,
+                fecha_hora__range=(from_date, to_date)
+            )
+
+            venta_productos = VentaProducto.objects.select_related(
+                "producto",
+                "producto__inventario"
+            ).filter(
+                venta__in=ventas,
+                venta__comprobante__estado_sunat__in=["ACEPTADO", "ANULADO"]
+            )
+
+            data = {}
+
+            for vp in venta_productos:
+                if not vp.producto:
+                    continue
+
+                prod_id = vp.producto.id
+
+                if prod_id not in data:
+                    data[prod_id] = {
+                        "producto": {
+                            "id": vp.producto.id,
+                            "nombre": vp.producto.nombre,
+                            "precio": vp.producto.precio if hasattr(vp.producto, 'precio') else None,
+                        },
+                        "inventario": None,
+                        "cantidad_total_vendida": 0,
+                        "total_vendido": 0
+                    }
+
+                    # inventario (si existe)
+                    if hasattr(vp.producto, "inventario") and vp.producto.inventario:
+                        data[prod_id]["inventario"] = {
+                            "stock": vp.producto.inventario.stock,
+                            "stock_minimo": getattr(vp.producto.inventario, "stock_minimo", None)
+                        }
+
+                # acumulados
+                data[prod_id]["cantidad_total_vendida"] += vp.cantidad
+                data[prod_id]["total_vendido"] += (vp.cantidad * vp.precio)
+
+            # ordenar
+            result = list(data.values())
+            result.sort(key=lambda x: x["cantidad_total_vendida"], reverse=True)
+
+            return result
+
+        # ─────────────────────────────────────────────
+        # 📊 RESPUESTA FINAL
+        # ─────────────────────────────────────────────
+        return Response({
+            "hoy": get_data(start_today, end_today),
+            "semana": get_data(start_week, end_week),
+            "mes": get_data(start_month, end_month),
+            "anio": get_data(start_year, end_year),
+        })
