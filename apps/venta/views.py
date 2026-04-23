@@ -1381,7 +1381,7 @@ class VentasHoyView(APIView):
 
 
 
-
+'''
 
 class ProductosMasVendidosResumenView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1469,3 +1469,6 @@ class ProductosMasVendidosResumenView(APIView):
             "mes": get_data(start_month, end_month),
             "anio": get_data(start_year, end_year),
         })
+
+
+'''
