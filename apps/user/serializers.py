@@ -83,28 +83,14 @@ class UserAccountSerializer(serializers.ModelSerializer):
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
-
-        user = self.user
-
-        # básicos
-        data["user_id"] = user.id
-        data["is_superuser"] = user.is_superuser
-        data["es_empleado"] = user.es_empleado
-
-        # tienda ID
-        data["tienda"] = user.tienda.id if user.tienda else None
-
-        # tienda completa
-        data["tienda_data"] = (
-            TiendaSerializer(user.tienda).data if user.tienda else None
-        )
-
-        # 🔥 USER COMPLETO
-        data["user_data"] = UserSerializer(user).data
-
+        data["user_id"] = self.user.id  # type: ignore # Agrega el ID del usuario
+        data["tienda"] = self.user.tienda.id  # type: ignore # <- Agrega la tienda asociada
+        data["is_superuser"] = self.user.is_superuser # type: ignore
+        data["es_empleado"] = self.user.es_empleado # type: ignore
+        data["user"] = self.user
+        data["tienda_data"] = self.user.tienda # type: ignore
+        print(data)  
         return data
-
-
 class UpdatePasswordAPIView(APIView):
     def put(self, request, user_id):
         try:

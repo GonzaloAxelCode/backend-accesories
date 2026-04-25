@@ -425,7 +425,10 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         return Response({
             "refresh": tokens["refresh"],
             "access": tokens["access"],
-            "user_id": user_id
+            "user_id": user_id,
+            "user" : UserSerializer(serializer.user).data,
+            "tienda":  TiendaSerializer(serializer.user.tienda).data if serializer.user.tienda else None
+
         })
 
 class UpdatePermissionsAPIView(APIView):
