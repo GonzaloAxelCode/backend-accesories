@@ -12,6 +12,9 @@ class Tienda(models.Model):
     razon_social = models.CharField(max_length=150, null=True, blank=True)
     ruc = models.CharField(max_length=11, null=True, blank=True)
 
+    serie = models.CharField(max_length=150, null=True, blank=True)
+    representante = models.CharField(max_length=150, null=True, blank=True)
+
     direccion = models.TextField(null=True, blank=True)
     telefono = models.CharField(max_length=15, null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
@@ -24,7 +27,9 @@ class Tienda(models.Model):
     is_deleted = models.BooleanField(default=False)
 
     date_created = models.DateTimeField(auto_now_add=True, null=True)
-
+    correlativo_inicial_boleta = models.IntegerField(default=1,null=True, blank=True)
+    correlativo_inicial_factura = models.IntegerField(default=1,null=True, blank=True)
+    correlativo_inicial_nota_credito = models.IntegerField(default=1 ,null=True, blank=True)
     def __str__(self):
         return self.nombre
     class Meta:

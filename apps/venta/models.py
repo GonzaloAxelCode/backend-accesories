@@ -53,3 +53,11 @@ class VentaProducto(models.Model):
     date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
     class Meta:
         ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
+
+class SerieCorrelativo(models.Model):
+    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE)
+    serie = models.CharField(max_length=10)
+    correlativo = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ('tienda', 'serie')

@@ -142,3 +142,39 @@ def getNextCorrelativoNotaCredito(
 
     return nueva_serie, nuevo_correlativo
 
+
+def getNextCorrelativoMultiTienda(tipo_comprobante: str, tienda):
+    tipo = tipo_comprobante.lower()
+
+    # ============================
+    # FORMAR SERIE COMPLETA
+    # ============================
+    numero_serie = tienda.serie or "001"
+
+    if tipo == "factura":
+        serie_base = f"F{numero_serie}"
+        correlativo_inicial = tienda.correlativo_inicial_factura or 1
+    else:
+        serie_base = f"B{numero_serie}"
+        correlativo_inicial = tienda.correlativo_inicial_boleta or 1
+
+    # ============================
+    # BUSCAR ÚLTIMO
+    # ============================
+    ultimo = (
+        ComprobanteElectronico.objects
+        .filter(venta__tienda=tienda, serie=serie_base)
+        .order_by('-correlativo')
+        .first()
+    )
+
+    # ============================
+    # GENERAR CORRELATIVO
+    # ============================
+    if ultimo:
+        correlativo_actual = int(ultimo.correlativo) # type: ignore
+        nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
+    else:
+        nuevo_correlativo = str(correlativo_inicial).zfill(8)
+
+    return serie_base, nuevo_correlativo

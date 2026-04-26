@@ -57,7 +57,7 @@ from apps.venta.serialzers import VentaSerializer
 from core.permissions import CanCancelSalePermission, CanMakeSalePermission, IsSuperUser
 from core.settings import SUNAT_PHP
 from .models import Venta, VentaProducto, Tienda, Producto
-from apps.venta.utils import generateLeyend, getNextCorrelativo, getNextCorrelativo_ORIGINAL, normalize_date
+from apps.venta.utils import generateLeyend, getNextCorrelativo, getNextCorrelativo_ORIGINAL, getNextCorrelativoMultiTienda, normalize_date
 
 
 from django.contrib.auth import get_user_model
@@ -231,7 +231,7 @@ class RegistrarVentaView(APIView):
                 venta.save()
 
                 leyenda = generateLeyend(total)
-                serie, correlativo = getNextCorrelativo_ORIGINAL(data["tipoComprobante"],correlativo_inicial_b=68)
+                serie, correlativo = getNextCorrelativoMultiTienda(data["tipoComprobante"],tienda)
 
                 comprobante_data = {
                     "serie": serie,
@@ -250,6 +250,21 @@ class RegistrarVentaView(APIView):
                         "nombre": venta.nombre_cliente,
                     },
                     "items": productos_items_for_sunat,
+
+                    # EMISOR DESDE TIENDA
+                                # ============================
+                    "emisor" : {
+                                    "ruc": tienda.ruc,
+                                    "razonSocial": tienda.razon_social,
+                                    "nombreComercial": tienda.nombre,
+                                    # ⚠️ estos debes ajustarlos según tu modelo real
+                                    "ubigeo": "150101",  # 👈 deberías guardarlo en BD luego
+                                    "departamento": "LIMA",
+                                    "provincia": "LIMA",
+                                    "distrito": "LIMA",
+                                    "urbanizacion": "-",
+                                    "direccion": tienda.direccion or "-"
+                    }
                 }
 
                 comprobante = ComprobanteElectronico.objects.create(
@@ -272,6 +287,8 @@ class RegistrarVentaView(APIView):
                     items=comprobante_data["items"],
                 )
 
+                # ============================
+         
             # =====================================================
             # 2️⃣ SUNAT (FUERA DEL ATOMIC)
             # =====================================================
