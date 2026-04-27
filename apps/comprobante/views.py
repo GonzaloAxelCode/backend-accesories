@@ -33,7 +33,7 @@ import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from apps.venta.utils import getNextCorrelativo, getNextCorrelativoNotaCredito
+from apps.venta.utils import getNextCorrelativo, getNextCorrelativoNotaCredito, getNextCorrelativoNotaCreditoMultitienda
 from core.permissions import CanCancelSalePermission, CanMakeSalePermission
 from core.settings import SUNAT_PHP
 from rest_framework.permissions import IsAuthenticated
@@ -145,6 +145,7 @@ class RegistrarNotaCreditoView(APIView):
     def post(self, request):
         try:
             data = request.data
+            tienda = request.user.tienda
 
             # 🔹 Validación básica
             if not all(k in data for k in ["venta_id", "motivo", "tipo_motivo"]):
@@ -176,8 +177,9 @@ class RegistrarNotaCreditoView(APIView):
             )
 
             # 🔹 Serie y correlativo NC (07)
-            serie_nc, correlativo_nc = getNextCorrelativoNotaCredito(
-                tipo_comprobante_modifica=comprobante.tipo_comprobante.lower()
+            serie_nc, correlativo_nc = getNextCorrelativoNotaCreditoMultitienda(
+                tipo_comprobante_modifica=comprobante.tipo_comprobante.lower(),
+                tienda=tienda
             )
 
             fecha_emision = timezone.now()
@@ -215,6 +217,18 @@ class RegistrarNotaCreditoView(APIView):
                 },
                 "cliente": cliente,
                 "items": comprobante.items,
+                  "emisor" : {
+                                    "ruc": tienda.ruc,
+                                    "razonSocial": tienda.razon_social,
+                                    "nombreComercial": tienda.nombre,
+                                    # ⚠️ estos debes ajustarlos según tu modelo real
+                                    "ubigeo": "150101",  # 👈 deberías guardarlo en BD luego
+                                    "departamento": "LIMA",
+                                    "provincia": "LIMA",
+                                    "distrito": "LIMA",
+                                    "urbanizacion": "-",
+                                    "direccion": tienda.direccion or "-"
+                    }
             }
 
             php_backend_url = f"{SUNAT_PHP}/src/api/nota-credito-post.php"

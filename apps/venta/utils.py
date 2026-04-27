@@ -143,6 +143,57 @@ def getNextCorrelativoNotaCredito(
     return nueva_serie, nuevo_correlativo
 
 
+def getNextCorrelativoNotaCreditoMultitienda(
+    tipo_comprobante_modifica: str,
+    tienda
+):
+    tipo = tipo_comprobante_modifica.lower()
+
+    # ============================
+    # FORMAR SERIE
+    # ============================
+    numero_serie = tienda.serie or "001"
+
+    if tipo == "factura":
+        serie_base = f"FC{numero_serie}"   # Nota crédito de factura
+    elif tipo in ["boleta", "anonima"]:
+        serie_base = f"BC{numero_serie}"   # Nota crédito de boleta
+    else:
+        raise ValueError("Tipo de comprobante inválido")
+
+    # ============================
+    # CORRELATIVO INICIAL DESDE TIENDA
+    # ============================
+    correlativo_inicial = tienda.correlativo_inicial_nota_credito or 1
+
+    # ============================
+    # BUSCAR ÚLTIMO
+    # ============================
+    ultimo = (
+        NotaCreditoDB.objects
+        .filter(venta__tienda=tienda, serie=serie_base)
+        .order_by('-correlativo')
+        .first()
+    )
+
+    # ============================
+    # GENERAR CORRELATIVO
+    # ============================
+    if ultimo:
+        correlativo_actual = int(ultimo.correlativo)
+
+        if correlativo_actual >= 99999999:
+            raise ValueError(
+                f"Correlativo máximo alcanzado para la serie {serie_base}"
+            )
+
+        nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
+    else:
+        nuevo_correlativo = str(correlativo_inicial).zfill(8)
+
+    return serie_base, nuevo_correlativo
+
+
 def getNextCorrelativoMultiTienda(tipo_comprobante: str, tienda):
     tipo = tipo_comprobante.lower()
 
