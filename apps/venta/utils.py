@@ -155,9 +155,9 @@ def getNextCorrelativoNotaCreditoMultitienda(
     numero_serie = tienda.serie or "001"
 
     if tipo == "factura":
-        serie_base = f"FC{numero_serie}"   # Nota crédito de factura
+        serie_base = f"F{numero_serie}"   # Nota crédito de factura
     elif tipo in ["boleta", "anonima"]:
-        serie_base = f"BC{numero_serie}"   # Nota crédito de boleta
+        serie_base = f"B{numero_serie}"   # Nota crédito de boleta
     else:
         raise ValueError("Tipo de comprobante inválido")
 
