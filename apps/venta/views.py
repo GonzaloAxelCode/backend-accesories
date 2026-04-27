@@ -746,7 +746,7 @@ class VentasResumenView(APIView):
         current_year = today.year
         
         # Filtrar ventas activas de la tienda
-        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0,    comprobante__estado_sunat__in=["ACEPTADO", "ANULADO"])
+        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0,    comprobante__estado_sunat__in=["ACEPTADO"])
         
         # Ventas del día
         today_sales = ventas_activas.filter(fecha_hora__date=today).aggregate(total=Sum("total"))['total'] or 0
@@ -856,7 +856,7 @@ class ProductosMasVendidosHoyView(APIView):
         
         venta_productos = VentaProducto.objects.filter(
             venta__in=ventas,
-            venta__comprobante__estado_sunat__in=["ACEPTADO", "ANULADO",]
+            venta__comprobante__estado_sunat__in=["ACEPTADO",]
         )
 
         # 🟥 4️⃣ Contar por producto
@@ -895,7 +895,7 @@ class VentasPerDayOrMonth(APIView):
 
 
 
-        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0,comprobante__estado_sunat__in=["ACEPTADO", "ANULADO"])
+        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0,comprobante__estado_sunat__in=["ACEPTADO"])
 
         today_sales = None
         this_month_sales = None
