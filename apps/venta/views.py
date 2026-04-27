@@ -1290,7 +1290,8 @@ class VentasHoyView(APIView):
             # Filtrar ventas de hoy
             ventas = Venta.objects.filter(
                 tienda_id=tienda_id,total__gt=0,
-                fecha_hora__range=(from_date_obj, to_date_obj)
+                fecha_hora__range=(from_date_obj, to_date_obj),
+                comprobante__estado_sunat__in=["ACEPTADO"]
             )
             
             ventas_json = []
@@ -1396,96 +1397,3 @@ class VentasHoyView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-
-
-'''
-
-class ProductosMasVendidosResumenView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        tienda = request.user.tienda
-        today = now().date()
-
-        # ─────────────────────────────────────────────
-        # 📅 RANGOS DE FECHA
-        # ─────────────────────────────────────────────
-        start_today = make_aware(datetime.combine(today, time.min))
-        end_today   = make_aware(datetime.combine(today, time.max))
-
-        start_week = make_aware(datetime.combine(
-            today - timedelta(days=today.weekday()), time.min
-        ))
-        end_week = end_today
-
-        start_month = make_aware(datetime.combine(
-            today.replace(day=1), time.min
-        ))
-        end_month = end_today
-
-        start_year = make_aware(datetime.combine(
-            today.replace(month=1, day=1), time.min
-        ))
-        end_year = end_today
-
-        # ─────────────────────────────────────────────
-        # ⚡ FUNCIÓN OPTIMIZADA (SIN LOOPS)
-        # ─────────────────────────────────────────────
-        def get_data(from_date, to_date):
-            qs = (
-                VentaProducto.objects
-                .filter(
-                    venta__tienda=tienda,
-                    venta__activo=True,
-                    venta__total__gt=0,
-                    venta__fecha_hora__range=(from_date, to_date),
-                    venta__comprobante__estado_sunat__in=["ACEPTADO", "ANULADO"],
-                    producto__isnull=False
-                )
-                .values(
-                    "producto__id",
-                    "producto__nombre",
-                    "producto__precio",
-                    "producto__inventario__stock",
-                    "producto__inventario__stock_minimo"
-                )
-                .annotate(
-                    cantidad_total_vendida=Coalesce(Sum("cantidad"), 0),
-                    total_vendido=Coalesce(Sum(F("cantidad") * F("precio")), 0)
-                )
-                .order_by("-cantidad_total_vendida")
-            )
-
-            return [
-                {
-                    "producto": {
-                        "id": item["producto__id"],
-                        "nombre": item["producto__nombre"],
-                        "precio": item["producto__precio"],
-                    },
-                    "inventario": (
-                        {
-                            "stock": item["producto__inventario__stock"],
-                            "stock_minimo": item["producto__inventario__stock_minimo"],
-                        }
-                        if item["producto__inventario__stock"] is not None
-                        else None
-                    ),
-                    "cantidad_total_vendida": item["cantidad_total_vendida"],
-                    "total_vendido": item["total_vendido"],
-                }
-                for item in qs
-            ]
-
-        # ─────────────────────────────────────────────
-        # 📊 RESPUESTA FINAL
-        # ─────────────────────────────────────────────
-        return Response({
-            "hoy": get_data(start_today, end_today),
-            "semana": get_data(start_week, end_week),
-            "mes": get_data(start_month, end_month),
-            "anio": get_data(start_year, end_year),
-        })
-
-
-'''
