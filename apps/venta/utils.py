@@ -188,7 +188,7 @@ def getNextCorrelativoNotaCreditoMultitienda(
                 f"Correlativo máximo alcanzado para la serie {serie_base}"
             )
 
-        nuevo_correlativo = str(17).zfill(8)
+        nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
     else:
         nuevo_correlativo = str(correlativo_inicial).zfill(8)
 
