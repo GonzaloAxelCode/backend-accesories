@@ -324,6 +324,8 @@ class RegistrarVentaView(APIView):
 
                     comprobante.save(update_fields=["estado_sunat"])
                     venta.save(update_fields=["estado"])
+                    print("Error SUNAT:", error_sunat)
+
 
                     return Response({
                         "message": "Error SUNAT",
