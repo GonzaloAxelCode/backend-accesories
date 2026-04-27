@@ -289,66 +289,40 @@ class RegistrarVentaView(APIView):
 
                 # ============================
          
-                # =====================================================
-                # 2️⃣ SUNAT (FUERA DEL ATOMIC)
-                # =====================================================
-                try:
-                    response = requests.post(
-                        php_backend_url,
-                        json=comprobante_data,
-                        headers={"Content-Type": "application/json"},
-                        timeout=30,
-                    )
+            # =====================================================
+            # 2️⃣ SUNAT (FUERA DEL ATOMIC)
+            # =====================================================
+            try:
+                response = requests.post(
+                    php_backend_url,
+                    json=comprobante_data,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30,
+                )
+                response_json = response.json()
+            except Exception as e:
+                
+                return Response({"error": str(e)}, status=400)
 
-                    response_json = response.json()
+            cdr_codigo = response_json.get("cdr_codigo")
 
-                except Exception as e:
-                        return Response({"error": str(e)}, status=400)
-
-
-                # ============================
-                # 🔥 DEBUG (IMPORTANTE)
-                # ============================
-                print("SUNAT RESPONSE:", response_json)
-
-
-                # ============================
-                # MANEJO CORRECTO
-                # ============================
-                if not response_json.get("success"):
-
-                    error_sunat = response_json.get("error")
-
-                    comprobante.estado_sunat = "RECHAZADO"
-                    venta.estado = "RECHAZADO"
-
-                    comprobante.save(update_fields=["estado_sunat"])
-                    venta.save(update_fields=["estado"])
-                    print("Error SUNAT:", error_sunat)
-
-
-                    return Response({
-                        "message": "Error SUNAT",
-                        "sunat_error": error_sunat
-                    }, status=400)
-
-
-                # ============================
-                # SI TODO OK
-                # ============================
-                cdr_codigo = response_json.get("cdr_codigo")
-
-                if cdr_codigo == "0":
-                    comprobante.estado_sunat = "ACEPTADO"
-                    venta.estado = "ACEPTADO"
-                else:
-                    comprobante.estado_sunat = "RECHAZADO"
-                    venta.estado = "RECHAZADO"
-
-                comprobante.save(update_fields=["estado_sunat"])
-                venta.save(update_fields=["estado"])
-                                    
-                                    
+            if cdr_codigo == "0":
+                comprobante.estado_sunat = "ACEPTADO"
+                venta.estado = "ACEPTADO"
+            else:
+                comprobante.estado_sunat = "RECHAZADO"
+                venta.estado = "RECHAZADO"
+            comprobante.save(update_fields=["estado_sunat"])
+            venta.save(update_fields=["estado"])
+           
+            # Actualizar comprobante con URLs
+            comprobante.xml_url = response_json.get("xml_url")
+            comprobante.pdf_url = response_json.get("pdf_url")
+            comprobante.cdr_url = response_json.get("cdr_url")
+            comprobante.ticket_url = response_json.get("ticket_url")
+            comprobante.save(update_fields=["xml_url", "pdf_url", "cdr_url", "ticket_url"])
+                    
+                    
                     
             # Comprobante de SUNAT (resumen con todos los detalles)
             new_comprobante = comprobante 
