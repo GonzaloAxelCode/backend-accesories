@@ -164,6 +164,7 @@ def getNextCorrelativoNotaCreditoMultitienda(
     # ============================
     # CORRELATIVO INICIAL DESDE TIENDA
     # ============================
+    #si el correlativo en db es 1 entonces empzamos en 17, de lo contrario empzamos en el valor de la db
     correlativo_inicial = tienda.correlativo_inicial_nota_credito or 1
 
     # ============================
@@ -187,7 +188,7 @@ def getNextCorrelativoNotaCreditoMultitienda(
                 f"Correlativo máximo alcanzado para la serie {serie_base}"
             )
 
-        nuevo_correlativo = str(correlativo_actual + 1).zfill(8)
+        nuevo_correlativo = str(17).zfill(8)
     else:
         nuevo_correlativo = str(correlativo_inicial).zfill(8)
 
