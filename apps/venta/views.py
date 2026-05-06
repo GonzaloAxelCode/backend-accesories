@@ -733,45 +733,60 @@ class EliminarVentaView(APIView):
         )
         
     
+        
+
 class VentasResumenView(APIView):
     permission_classes = [IsAuthenticated]
-    
+
     def post(self, request, *args, **kwargs):
         tienda_id = request.user.tienda
-     
-        # Obtener la fecha y hora actual en la zona horaria de Lima, Perú
+
         today = localtime(now()).date()
         start_of_week = today - timedelta(days=today.weekday())
         start_of_month = today.replace(day=1)
         current_year = today.year
-        
-        # Filtrar ventas activas de la tienda
-        ventas_activas = Venta.objects.filter(tienda_id=tienda_id, activo=True,total__gt=0,        venta__comprobante__estado_sunat__in=["ACEPTADO","aceptado"],
-            venta__estado=["ACEPTADO","aceptado"])
-        
-        # Ventas del día
-        today_sales = ventas_activas.filter(fecha_hora__date=today).aggregate(total=Sum("total"))['total'] or 0
-        
-        # Ventas de la semana (considerando el año)
-        this_week_sales = ventas_activas.filter(
-            fecha_hora__date__gte=start_of_week,
-            fecha_hora__year=current_year
-        ).aggregate(total=Sum("total"))['total'] or 0
-        
-        # Ventas del mes (considerando el año)
-        this_month_sales = ventas_activas.filter(
-            fecha_hora__date__gte=start_of_month,
-            fecha_hora__year=current_year
-        ).aggregate(total=Sum("total"))['total'] or 0
-        
+
+        ventas_activas = Venta.objects.filter(
+            tienda_id=tienda_id,
+            activo=True,
+            total__gt=0,
+            comprobante__estado_sunat__in=["ACEPTADO", "aceptado"],
+            # ❌ removido: estado__in=["ACEPTADO","aceptado"]
+            # el estado de Venta es "Completada", no "ACEPTADO"
+            # el estado SUNAT vive en comprobante__estado_sunat
+        )
+
+        today_sales = (
+            ventas_activas
+            .filter(fecha_hora__date=today)
+            .aggregate(total=Sum("total"))["total"] or 0
+        )
+
+        this_week_sales = (
+            ventas_activas
+            .filter(
+                fecha_hora__date__gte=start_of_week,
+                fecha_hora__date__lte=today,        # ← evita incluir fechas futuras
+                fecha_hora__year=current_year,
+            )
+            .aggregate(total=Sum("total"))["total"] or 0
+        )
+
+        this_month_sales = (
+            ventas_activas
+            .filter(
+                fecha_hora__date__gte=start_of_month,
+                fecha_hora__date__lte=today,        # ← idem
+                fecha_hora__year=current_year,
+            )
+            .aggregate(total=Sum("total"))["total"] or 0
+        )
+
         return Response({
             "todaySales": today_sales,
             "thisWeekSales": this_week_sales,
-            "thisMonthSales": this_month_sales
+            "thisMonthSales": this_month_sales,
         })
-        
-
-
 
 
 class VentaSalesByDateView(APIView):
@@ -1277,33 +1292,33 @@ class VentasPorTiendaView(APIView):
 
 class VentasHoyView(APIView):
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request):
         try:
             tienda_id = request.user.tienda
-            
-            # Obtener fecha de hoy (desde las 00:00:00 hasta las 23:59:59)
- 
+
             tz = ZoneInfo("America/Lima")
             now = datetime.now(tz)
-
             hoy = now.date()
 
-            from_date_obj = datetime.combine(hoy, time(0, 0, 0, tzinfo=tz))
-            to_date_obj   = datetime.combine(hoy, time(23, 59, 59, tzinfo=tz))
-            # Filtrar ventas de hoy
+            from_date_obj = datetime.combine(hoy, time(0, 0, 0), tzinfo=tz)
+            to_date_obj   = datetime.combine(hoy, time(23, 59, 59), tzinfo=tz)
+
             ventas = Venta.objects.filter(
-                tienda_id=tienda_id,total__gt=0,
+                tienda_id=tienda_id,
+                total__gt=0,
                 fecha_hora__range=(from_date_obj, to_date_obj),
-                     venta__comprobante__estado_sunat__in=["ACEPTADO","aceptado"],
-            venta__estado=["ACEPTADO","aceptado"],
+                comprobante__estado_sunat__in=["ACEPTADO", "aceptado"],
+            ).select_related(
+                "comprobante", "nota_credito", "usuario", "tienda"
+            ).prefetch_related(
+                "ventaproducto_set__producto"
             )
-            
+
             ventas_json = []
             for venta in ventas:
-                comprobante_venta = ComprobanteElectronico.objects.filter(venta=venta).first()
+                comprobante_venta = getattr(venta, "comprobante", None)
                 comprobante_json = None
-                productos = VentaProducto.objects.filter(venta=venta)
 
                 if comprobante_venta:
                     comprobante_json = {
@@ -1325,27 +1340,27 @@ class VentasHoyView(APIView):
                         "pdf_url": comprobante_venta.pdf_url,
                         "cdr_url": comprobante_venta.cdr_url,
                         "ticket_url": comprobante_venta.ticket_url,
-                        "items": comprobante_venta.items
+                        "items": comprobante_venta.items,
                     }
 
                 productos_json = [
                     {
-                        "id": producto.id, # type: ignore
-                        "producto": producto.producto.id if producto.producto else None, # type: ignore
-                        "producto_nombre": producto.producto.nombre, # type: ignore
-                        "cantidad": producto.cantidad,
-                        "valor_unitario": float(producto.valor_unitario),
-                        "valor_venta": float(producto.valor_venta),
-                        "base_igv": float(producto.base_igv),
-                        "porcentaje_igv": float(producto.porcentaje_igv),
-                        "igv": float(producto.igv),
-                        "tipo_afectacion_igv": producto.tipo_afectacion_igv,
-                        "total_impuestos": float(producto.total_impuestos),
-                        "precio_unitario": float(producto.precio_unitario)
+                        "id": p.id,
+                        "producto": p.producto.id if p.producto else None,
+                        "producto_nombre": p.producto.nombre if p.producto else None,
+                        "cantidad": p.cantidad,
+                        "valor_unitario": float(p.valor_unitario),
+                        "valor_venta": float(p.valor_venta),
+                        "base_igv": float(p.base_igv),
+                        "porcentaje_igv": float(p.porcentaje_igv),
+                        "igv": float(p.igv),
+                        "tipo_afectacion_igv": p.tipo_afectacion_igv,
+                        "total_impuestos": float(p.total_impuestos),
+                        "precio_unitario": float(p.precio_unitario),
                     }
-                    for producto in productos
+                    for p in venta.ventaproducto_set.all() # type: ignore
                 ]
-                
+
                 nota_credito = getattr(venta, "nota_credito", None)
                 nota_credito_json = None
                 if nota_credito:
@@ -1363,10 +1378,10 @@ class VentasHoyView(APIView):
                         "estado_sunat": nota_credito.estado_sunat,
                         "xml_url": nota_credito.xml_url,
                         "pdf_url": nota_credito.pdf_url,
-                        "cdr_url": nota_credito.cdr_url, 
+                        "cdr_url": nota_credito.cdr_url,
                         "fecha_emision": nota_credito.fecha_emision.isoformat(),
                     }
-                
+
                 ventas_json.append({
                     "id": venta.id, # type: ignore
                     "usuario": venta.usuario.id if venta.usuario else None,
@@ -1379,7 +1394,7 @@ class VentasHoyView(APIView):
                     "activo": venta.activo,
                     "tipo_comprobante": venta.tipo_comprobante,
                     "productos": productos_json,
-                    "total": venta.total,
+                    "total": float(venta.total),
                     "subtotal": float(venta.subtotal),
                     "gravado_total": float(venta.gravado_total),
                     "igv_total": float(venta.igv_total),
@@ -1391,14 +1406,10 @@ class VentasHoyView(APIView):
                     "nombre_cliente": venta.nombre_cliente,
                     "email_cliente": venta.email_cliente,
                     "telefono_cliente": venta.telefono_cliente,
-                    "direccion_cliente": venta.direccion_cliente
+                    "direccion_cliente": venta.direccion_cliente,
                 })
 
-            return Response({
-                "results": ventas_json
-            }, status=status.HTTP_200_OK)
+            return Response({"results": ventas_json}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
