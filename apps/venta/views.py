@@ -1357,6 +1357,7 @@ class VentasHoyView(APIView):
                         "tipo_afectacion_igv": p.tipo_afectacion_igv,
                         "total_impuestos": float(p.total_impuestos),
                         "precio_unitario": float(p.precio_unitario),
+                        "producto_imagen" : p.producto.imagen
                     }
                     for p in venta.ventaproducto_set.all() # type: ignore
                 ]
