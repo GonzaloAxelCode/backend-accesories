@@ -20,14 +20,15 @@ SECRET_KEY = 'django-insecure-b_(uj)meht&*#4#223px8w@t=l6emfbdtw2jcw+ei39d!j&5c%
 DEBUG = True
 # Configuración de CORS
 
-#ALLOWED_HOSTS = ['174.138.55.7','10.153.172.42', 'localhost', '127.0.0.1','https://inventarioaxel.duckdns.org','inventarioaxel.duckdns.org']
-
 ALLOWED_HOSTS = ["*"]
 
-
-CORS_ORIGIN_ALLOW_ALL = True  # Permitir cualquier origen en desarrollo
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOW_CREDENTIALS = True  # Importante para cookies/autenticación
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:4200',
+    'http://127.0.0.1:4200',
+    'https://inventario-electronic-w7mn.vercel.app',
+    'https://inventarioaxel.duckdns.org',
+]
+CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
