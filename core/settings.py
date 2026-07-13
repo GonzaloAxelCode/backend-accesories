@@ -63,7 +63,8 @@ INSTALLED_APPS = [
                     "apps.venta",
                     
                     "apps.comprobante",
-                    "apps.caja",
+                    
+                    "apps.pedidos",
                     "apps.compras",
     "ckeditor",
     "ckeditor_uploader",
@@ -225,9 +226,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 STATIC_URL = '/statics/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'statics')
-]
 
 
 SITE_DOMAIN = os.environ.get("SITE_DOMAIN")

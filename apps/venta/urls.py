@@ -1,21 +1,45 @@
 from django.urls import path
 
-from apps.venta.views import CancelarVentaView, EliminarVentaView, GenerarComprobanteVentaView, ProductosMasVendidosHoyView,  RegistrarVentaSinComprobanteView, RegistrarVentaView, VentaBusquedaView, VentaSalesByDateView, VentasHoyView, VentasPerDayOrMonth, VentasPorTiendaView, VentasResumenView
-KEY_DEVELOPMENT_ACTIONS = "secret"
-urlpatterns = [
-    path('ventas/crear/', RegistrarVentaView.as_view(), name='crear_venta'),
-    path('ventas/crear/pendiente/', RegistrarVentaSinComprobanteView.as_view(), name='crear_venta_sin_comprobante'),
-    
-    path('ventas/tienda/', VentasPorTiendaView.as_view(), name='ventas-por-tienda'),
-    path('ventas/cancelar/<int:venta_id>/', CancelarVentaView.as_view(), name='cancelar-venta'),
-    path(f'ventas/delete/{KEY_DEVELOPMENT_ACTIONS}/<int:venta_id>/', EliminarVentaView.as_view()),
-    path('ventas/resumen/', VentasResumenView.as_view(), name='ventas-resumen'),
-    path('sales-by-date/', VentaSalesByDateView.as_view(), name='venta-sales-by-date'),
-    path('ventas/top-productos-vendidos-hoy/', ProductosMasVendidosHoyView.as_view(), name='top-productos-vendidos_hoy'),
-  
-    path('ventas/resumenbymonthorday/', VentasPerDayOrMonth.as_view(), name='ventas-resumen-bymonthorday'),
-    path("ventas/search/",VentaBusquedaView.as_view(),name="Venta Busqueda"),
-    path('ventas/generar-comprobante/', GenerarComprobanteVentaView.as_view(), name='generar-comprobante'),
-    path('ventas/hoy/', VentasHoyView.as_view(), name='ventas-hoy'),
-]
+# ANTES: RegistrarVentaView, VentasTotalesPorTiendaView, VentasResumenView,
+#        VentaSalesByDateView, ProductosMasVendidosHoyView, VentasPerDayAndMonth,
+#        VentaBusquedaView, VentasTotalesHoyView
+from apps.venta.views import (
+    CreateSaleView,
+    SalesTotalsView,
+    SalesSummaryView,
+    SalesByDateRangeView,
+    TopProductsTodayView,
+    TopProductsByMonthView,
+    SalesByDayMonthView,
+    SearchSalesView,
+    SalesTodayView,
+    PaymentMethodsDistributionView,
+    SalesSatisfactionView,
+    SalesDailyTrendView,
+)
 
+# MAPEO DE CAMBIOS (para frontend):
+# RegistrarVentaView        → CreateSaleView         | ventas/crear/          → sales/create/
+# VentasTotalesPorTiendaView → SalesTotalsView        | ventas/tienda/         → sales/totals/
+# VentasResumenView         → SalesSummaryView        | ventas/resumen/        → sales/summary/
+# VentaSalesByDateView      → SalesByDateRangeView    | sales-by-date/         → sales/date-range/
+# ProductosMasVendidosHoyView → TopProductsTodayView  | ventas/top-productos-vendidos-hoy/ → sales/top-products/
+# VentasPerDayAndMonth      → SalesByDayMonthView     | ventas/resumenbymonthorday/ → sales/by-day-month/
+# VentaBusquedaView         → SearchSalesView        | ventas/search/         → sales/search/
+# VentasTotalesHoyView      → SalesTodayView          | ventas/hoy/            → sales/today/
+# TopProductsByMonthView    → TopProductsByMonthView  | ventas/top-productos-mes/ → sales/top-products-month/
+
+urlpatterns = [
+    path('sales/create/',          CreateSaleView.as_view(),          name='create-sale'),
+    path('sales/totals/',          SalesTotalsView.as_view(),         name='sales-totals'),
+    path('sales/summary/',         SalesSummaryView.as_view(),        name='sales-summary'),
+    path('sales/date-range/',      SalesByDateRangeView.as_view(),    name='sales-by-date-range'),
+    path('sales/top-products/',    TopProductsTodayView.as_view(),    name='top-products-today'),
+    path('sales/top-products-month/', TopProductsByMonthView.as_view(), name='top-products-month'),
+    path('sales/by-day-month/',    SalesByDayMonthView.as_view(),     name='sales-by-day-month'),
+    path('sales/search/',          SearchSalesView.as_view(),         name='search-sales'),
+    path('sales/today/',           SalesTodayView.as_view(),          name='sales-today'),
+    path('sales/payment-methods/', PaymentMethodsDistributionView.as_view(), name='payment-methods-distribution'),
+    path('sales/satisfaction/',    SalesSatisfactionView.as_view(),         name='sales-satisfaction'),
+    path('sales/daily-trend/',     SalesDailyTrendView.as_view(),          name='sales-daily-trend'),
+]
