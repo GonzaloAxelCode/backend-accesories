@@ -104,3 +104,4 @@ class CanUpdateProveedorPermission(HasCustomPermission):
     perm_code = 'user.can_update_proveedor'
 class CanDeleteProveedorPermission(HasCustomPermission):
     perm_code = 'user.can_delete_proveedor'
+

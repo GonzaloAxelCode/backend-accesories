@@ -11,8 +11,7 @@ class Categoria(models.Model):
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
     activo = models.BooleanField(default=True)
-    imagen = models.ImageField(upload_to='categorias/', null=True, blank=True)
-    
+    imagen = models.ImageField(upload_to='categorias/', null=True, blank=True)   
     orden = models.IntegerField(default=0, null=True, blank=True)
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True)
     destacado = models.BooleanField(default=False,null=True, blank=True)
