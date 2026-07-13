@@ -33,7 +33,7 @@ import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from apps.venta.utils import getNextCorrelativo, getNextCorrelativoNotaCredito, getNextCorrelativoNotaCreditoMultitienda
+from apps.venta.utils import ComprobanteService
 from core.permissions import CanCancelSalePermission, CanMakeSalePermission
 from core.settings import SUNAT_PHP
 from rest_framework.permissions import IsAuthenticated
@@ -177,7 +177,7 @@ class RegistrarNotaCreditoView(APIView):
             )
 
             # 🔹 Serie y correlativo NC (07)
-            serie_nc, correlativo_nc = getNextCorrelativoNotaCreditoMultitienda(
+            serie_nc, correlativo_nc = ComprobanteService.get_siguiente_nota_credito(
                 tipo_comprobante_modifica=comprobante.tipo_comprobante.lower(),
                 tienda=tienda
             )

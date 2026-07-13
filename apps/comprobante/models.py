@@ -1,6 +1,10 @@
 from django.db import models
 from apps.venta.models import Venta
 from django.utils import timezone
+from decimal import Decimal
+
+
+
 class ComprobanteElectronico(models.Model):
     venta = models.OneToOneField(
         Venta, on_delete=models.CASCADE, related_name='comprobante',
@@ -47,16 +51,8 @@ class ComprobanteElectronico(models.Model):
 
 
 
-
-from django.db import models
-from decimal import Decimal
-
-
 class NotaCreditoDB(models.Model):
-    """
-    Representa una Nota de Crédito electrónica emitida para anular o corregir una venta.
-    Cada nota de crédito está asociada a una venta (boleta o factura).
-    """
+   
 
     venta = models.OneToOneField(
         Venta,
