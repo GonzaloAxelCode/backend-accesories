@@ -35,7 +35,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from apps.venta.utils import ComprobanteService
 from core.permissions import CanCancelSalePermission, CanMakeSalePermission
-from core.settings import SUNAT_PHP
+from core.settings import SUNAT_PHP, SUNAT_API_KEY
 from rest_framework.permissions import IsAuthenticated
 
 class ConsultaDocumentoView(APIView):
@@ -235,7 +235,10 @@ class RegistrarNotaCreditoView(APIView):
             response = requests.post(
                 php_backend_url,
                 json=comprobante_data,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-API-Key": SUNAT_API_KEY,
+                },
                 timeout=20
             )
 

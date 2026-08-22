@@ -10,6 +10,7 @@ ENVIRONMENT = env
 
 
 SUNAT_PHP = os.getenv("SUNAT_PHP", "").strip()
+SUNAT_API_KEY = os.getenv("SUNAT_API_KEY", "").strip()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 

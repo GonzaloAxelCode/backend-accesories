@@ -272,13 +272,17 @@ class SunatService:
     def send_to_sunat(comprobante_data, tipo_comprobante):
         import requests
         from .exceptions import SunatError
+        from core.settings import SUNAT_API_KEY
 
         php_url = SunatService.get_php_url(tipo_comprobante)
         try:
             response = requests.post(
                 php_url,
                 json=comprobante_data,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-API-Key": SUNAT_API_KEY,
+                },
                 timeout=30,
             )
             response.raise_for_status()
