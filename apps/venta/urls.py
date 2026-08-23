@@ -4,6 +4,8 @@ from django.urls import path
 #        VentaSalesByDateView, ProductosMasVendidosHoyView, VentasPerDayAndMonth,
 #        VentaBusquedaView, VentasTotalesHoyView
 from apps.venta.views import (
+    ClientesMasCompraronView,
+    ClientesMasFrecuentesView,
     CreateSaleView,
     SalesTotalsView,
     SalesSummaryView,
@@ -42,4 +44,6 @@ urlpatterns = [
     path('sales/payment-methods/', PaymentMethodsDistributionView.as_view(), name='payment-methods-distribution'),
     path('sales/satisfaction/',    SalesSatisfactionView.as_view(),         name='sales-satisfaction'),
     path('sales/daily-trend/',     SalesDailyTrendView.as_view(),          name='sales-daily-trend'),
+    path('sales/clientes-frecuentes/', ClientesMasFrecuentesView.as_view(), name='clientes-frecuentes'),
+    path('sales/top-clientes-compra/', ClientesMasCompraronView.as_view(), name='top-clientes-compra'),
 ]

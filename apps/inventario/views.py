@@ -7,7 +7,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from math import ceil
 import re
-from django.db.models import Q
+from django.db.models import Q, Count
 
 from django.contrib.auth import get_user_model
 from apps.inventario.models import Inventario
@@ -342,7 +342,45 @@ class BuscarInventarioAPIViewSinRangos(APIView):
             "results": InventarioSerializer(result_page, many=True).data,
             "search_products_found": "products_found"
         }, status=status.HTTP_200_OK)
-        
+
+
+# ---------- PORCENTAJE DE PRODUCTOS POR CATEGORÍA ----------
+class PorcentajeProductosPorCategoriaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        total_productos = Producto.objects.filter(tienda=tienda, activo=True).count()
+
+        if total_productos == 0:
+            return Response({"categorias": []}, status=status.HTTP_200_OK)
+
+        productos_por_categoria = (
+            Producto.objects
+            .filter(tienda=tienda, activo=True)
+            .values("categoria__nombre")
+            .annotate(total=Count("id"))
+            .order_by("-total")
+        )
+
+        categorias = []
+        for item in productos_por_categoria:
+            nombre = item["categoria__nombre"] or "Sin categoría"
+            cantidad = item["total"]
+            porcentaje = round((cantidad / total_productos) * 100, 2)
+            categorias.append({
+                "categoria": nombre,
+                "porcentaje": porcentaje
+            })
+
+        return Response({"categorias": categorias}, status=status.HTTP_200_OK)
+
 # ---------- BUSCAR INVENTARIO ----------
 
 class BuscarInventarioAPIView(APIView):
@@ -472,5 +510,167 @@ class BuscarInventarioAPIView(APIView):
             "results": InventarioSerializer(result_page, many=True).data,
             "search_products_found": "products_found"
         }, status=status.HTTP_200_OK)
+
+
+# ---------- DISTRIBUCIÓN DE STOCK POR NIVEL ----------
+class DistribucionStockView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        inventarios = Inventario.objects.filter(tienda=tienda, activo=True)
+
+        sin_stock = 0
+        critico = 0
+        bajo = 0
+        normal = 0
+
+        for inv in inventarios:
+            if inv.cantidad == 0:
+                sin_stock += 1
+            elif inv.cantidad <= inv.stock_minimo * 0.5:
+                critico += 1
+            elif inv.cantidad <= inv.stock_minimo:
+                bajo += 1
+            else:
+                normal += 1
+
+        return Response({
+            "distribucion": {
+                "sin_stock": sin_stock,
+                "critico": critico,
+                "bajo": bajo,
+                "normal": normal
+            }
+        }, status=status.HTTP_200_OK)
+
+
+# ---------- PRODUCTOS POR RANGO DE PRECIOS ----------
+class ProductosPorRangoPreciosView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        inventarios = Inventario.objects.filter(tienda=tienda, activo=True)
+
+        rangos_compra = []
+        rangos_venta = []
+
+        for i in range(0, 120, 10):
+            minimo = i
+            maximo = i + 10
+
+            cantidad_compra = inventarios.filter(
+                costo_compra__gte=minimo,
+                costo_compra__lt=maximo
+            ).count()
+
+            cantidad_venta = inventarios.filter(
+                costo_venta__gte=minimo,
+                costo_venta__lt=maximo
+            ).count()
+
+            rangos_compra.append({
+                "rango": f"{minimo} - {maximo}",
+                "cantidad": cantidad_compra
+            })
+
+            rangos_venta.append({
+                "rango": f"{minimo} - {maximo}",
+                "cantidad": cantidad_venta
+            })
+
+        return Response({
+            "por_precio_compra": rangos_compra,
+            "por_precio_venta": rangos_venta
+        }, status=status.HTTP_200_OK)
+
+
+# ---------- VALORIZACIÓN DE INVENTARIOS POR CATEGORÍA ----------
+class ValorizacionInventarioView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        from django.db.models import Sum
+
+        valorizacion = (
+            Inventario.objects
+            .filter(tienda=tienda, activo=True)
+            .values("producto__categoria__nombre")
+            .annotate(
+                cantidad_productos=Count("id"),
+                total_compra=Sum("costo_compra"),
+                total_venta=Sum("costo_venta")
+            )
+            .order_by("producto__categoria__nombre")
+        )
+
+        categorias = []
+        for item in valorizacion:
+            nombre = item["producto__categoria__nombre"] or "Sin categoría"
+            categorias.append({
+                "categoria": nombre,
+                "cantidad_productos": item["cantidad_productos"],
+                "total_compra": float(item["total_compra"] or 0),
+                "total_venta": float(item["total_venta"] or 0)
+            })
+
+        return Response({"valorizacion": categorias}, status=status.HTTP_200_OK)
+
+
+# ---------- TOP CATEGORÍAS POR COMPRA ----------
+class TopCategoriasPorCompraView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        from django.db.models import Sum
+
+        top_categorias = (
+            Inventario.objects
+            .filter(tienda=tienda, activo=True)
+            .values("producto__categoria__nombre")
+            .annotate(
+                total_unidades=Sum("cantidad"),
+                total_gastado=Sum("costo_compra")
+            )
+            .order_by("-total_gastado")[:10]
+        )
+
+        categorias = []
+        for item in top_categorias:
+            nombre = item["producto__categoria__nombre"] or "Sin categoría"
+            categorias.append({
+                "categoria": nombre,
+                "total_unidades": item["total_unidades"] or 0,
+                "total_gastado": float(item["total_gastado"] or 0)
+            })
+
+        return Response({"top_categorias_compra": categorias}, status=status.HTTP_200_OK)
 
 

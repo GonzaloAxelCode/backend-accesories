@@ -76,9 +76,3 @@ class ComprobanteCompra(models.Model):
 
     class Meta:
         ordering = ["-date_created"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["proveedor", "tipo_comprobante", "serie", "correlativo"],
-                name="unique_comprobante_por_proveedor",
-            )
-        ]

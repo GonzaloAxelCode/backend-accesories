@@ -6,7 +6,7 @@ from math import ceil
 import json
 
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Count
 from django.utils import timezone
 from django.utils.timezone import make_aware, now, localtime
 from rest_framework.views import APIView
@@ -1030,3 +1030,117 @@ class SalesTodayView(APIView):
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ClientesMasFrecuentesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        anio = request.query_params.get("anio")
+        mes = request.query_params.get("mes")
+
+        if not anio or not mes:
+            return Response(
+                {"error": "Los parámetros 'anio' y 'mes' son requeridos."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            anio = int(anio)
+            mes = int(mes)
+        except ValueError:
+            return Response(
+                {"error": "Los parámetros 'anio' y 'mes' deben ser números enteros."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        ventas = (
+            Venta.objects
+            .filter(
+                tienda=tienda,
+                fecha_hora__year=anio,
+                fecha_hora__month=mes,
+                activo=True
+            )
+            .values("numero_documento_cliente", "nombre_cliente", "telefono_cliente")
+            .annotate(total_compras=Count("id"))
+            .order_by("-total_compras")
+        )
+
+        clientes = []
+        for v in ventas:
+            clientes.append({
+                "nombre": v["nombre_cliente"] or "Sin nombre",
+                "celular": v["telefono_cliente"] or "Sin celular",
+                "total_compras": v["total_compras"]
+            })
+
+        return Response({
+            "anio": anio,
+            "mes": mes,
+            "clientes_frecuentes": clientes
+        }, status=status.HTTP_200_OK)
+
+
+class ClientesMasCompraronView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        anio = request.query_params.get("anio")
+        mes = request.query_params.get("mes")
+
+        if not anio or not mes:
+            return Response(
+                {"error": "Los parámetros 'anio' y 'mes' son requeridos."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            anio = int(anio)
+            mes = int(mes)
+        except ValueError:
+            return Response(
+                {"error": "Los parámetros 'anio' y 'mes' deben ser números enteros."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        clientes = (
+            Venta.objects
+            .filter(
+                tienda=tienda,
+                fecha_hora__year=anio,
+                fecha_hora__month=mes,
+                activo=True
+            )
+            .values("numero_documento_cliente", "nombre_cliente", "telefono_cliente")
+            .annotate(total_gastado=Sum("total"))
+            .order_by("-total_gastado")[:10]
+        )
+
+        resultado = []
+        for c in clientes:
+            resultado.append({
+                "nombre": c["nombre_cliente"] or "Sin nombre",
+                "celular": c["telefono_cliente"] or "Sin celular",
+                "total_gastado": float(c["total_gastado"] or 0)
+            })
+
+        return Response({
+            "anio": anio,
+            "mes": mes,
+            "top_clientes": resultado
+        }, status=status.HTTP_200_OK)
