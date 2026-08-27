@@ -9,7 +9,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from apps.inventario.models import Inventario
 from apps.producto.models import Producto
-from apps.producto.serializers import ProductoSerializer
+from apps.producto.serializers import ProductoSerializer, ProductoDetalleCompletoSerializer
 from django.db.models import Q
 
 from django.db.models import Q
@@ -296,3 +296,39 @@ class DeleteProductoAPIView(APIView):
         return Response({
             "message": "Producto eliminado exitosamente"
         }, status=status.HTTP_204_NO_CONTENT)
+
+
+# ---------- BUSCAR PRODUCTO POR SKU CON DETALLE COMPLETO ----------
+class BuscarProductoPorSKUAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        sku = request.query_params.get('sku', '').strip()
+        
+        if not sku:
+            return Response(
+                {"error": "El parámetro SKU es requerido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            producto = Producto.objects.get(sku__iexact=sku, tienda=tienda, activo=True)
+            serializer = ProductoDetalleCompletoSerializer(producto)
+            
+            return Response({
+                "message": "Producto encontrado",
+                "producto": serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Producto.DoesNotExist:
+            return Response(
+                {"error": f"No se encontró un producto con SKU: {sku}"},
+                status=status.HTTP_404_NOT_FOUND
+            )

@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     BuscarProductoAPIView,
+    BuscarProductoPorSKUAPIView,
     CreateProductoAPIView,
     GetAllProductosAPIView,
     GetAllProductosAPIViewWithPagination,
@@ -17,5 +18,6 @@ urlpatterns = [
     path('productos/update/<int:id>/', UpdateProductoAPIView.as_view(), name='update_producto'),
     path('productos/delete/<int:id>/',DeleteProductoAPIView.as_view(),name='delete_producto'),
     path('productos/buscar-producto/', BuscarProductoAPIView.as_view(), name='buscar_producto'),
+    path('productos/buscar-por-sku/', BuscarProductoPorSKUAPIView.as_view(), name='buscar_producto_por_sku'),
 
 ]

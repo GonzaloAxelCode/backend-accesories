@@ -64,3 +64,57 @@ class ProductoSerializer(serializers.ModelSerializer):
                 instance.imagen.delete(save=False)
 
         return super().update(instance, validated_data)
+
+
+class ProductoDetalleCompletoSerializer(serializers.ModelSerializer):
+    categoria_nombre = serializers.SerializerMethodField()
+    imagen = serializers.ImageField(required=False, allow_null=True)
+    is_inventario = serializers.SerializerMethodField()
+    inventarios = serializers.SerializerMethodField()
+    tienda_nombre = serializers.SerializerMethodField()
+
+    # 👇 Aseguramos que caracteristicas sea JSON válido
+    caracteristicas = serializers.JSONField(required=False)
+
+    class Meta:
+        model = Producto
+        fields = [
+            'id',
+            'nombre',
+            'descripcion',
+            'categoria',
+            'categoria_nombre',
+            'sku',
+            'marca',
+            'modelo',
+            'caracteristicas',
+            'fecha_creacion',
+            'fecha_actualizacion',
+            'activo',
+            'imagen',
+            'is_inventario',
+            'inventarios',
+            'tienda',
+            'tienda_nombre',
+        ]
+
+    # ------------------------
+    # 🚀 CAMPOS EXTRA
+    # ------------------------
+
+    def get_categoria_nombre(self, obj):
+        return obj.categoria.nombre if obj.categoria else "Sin categoria"
+
+    def get_tienda_nombre(self, obj):
+        return obj.tienda.nombre if obj.tienda else "Sin tienda"
+
+    def get_is_inventario(self, obj):
+        from apps.inventario.models import Inventario  
+        return Inventario.objects.filter(producto=obj).exists()
+
+    def get_inventarios(self, obj):
+        from apps.inventario.models import Inventario
+        from apps.inventario.serializers import InventarioSerializer
+        
+        inventarios = Inventario.objects.filter(producto=obj, activo=True)
+        return InventarioSerializer(inventarios, many=True).data if inventarios.exists() else []
