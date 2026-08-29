@@ -6,7 +6,7 @@ from rest_framework.response import Response
 
 from apps.tienda.models import Tienda
 from apps.tienda.serializers import TiendaSerializer
-from core.permissions import IsSuperUser
+from core.permissions import IsSuperUser, IsAdminTienda
 from .models import UserAccount
 from .serializers import CustomTokenObtainPairSerializer, UserAccountSerializer, UserSerializer
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -25,7 +25,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status
 
 class GetAllUsersAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSuperUser]
+    permission_classes = [IsAuthenticated, IsAdminTienda]
 
     def get(self, request, tienda_id=None):
         authenticated_user = request.user
@@ -37,11 +37,45 @@ class GetAllUsersAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # 🔹 Excluir usuario autenticado y superusuarios
-        users = (
-            UserAccount.objects.exclude(id=authenticated_user.id)
-            .filter(is_superuser=False, tienda_id=tienda_id)
-        )
+        # 🔹 Si no es superuser, verificar que sea admin_tienda y que la tienda solicitada sea la suya o una sucursal suya
+        if not authenticated_user.is_superuser:
+            is_admin = authenticated_user.tienda and authenticated_user.tienda.propietario_id == authenticated_user.id  # type: ignore
+            if not is_admin:
+                return Response(
+                    {"detail": "Solo superuser o admin_tienda puede listar usuarios."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            # Admin solo puede listar usuarios de su tienda principal o sucursales
+            tienda_solicitada = Tienda.objects.get(id=tienda_id)
+            allowed_ids = {authenticated_user.tienda.id}  # type: ignore
+            # agregar sucursales
+            allowed_ids.update(
+                Tienda.objects.filter(tienda_padre=authenticated_user.tienda).values_list("id", flat=True)  # type: ignore
+            )
+            # agregar tiendas donde es propietario
+            allowed_ids.update(
+                Tienda.objects.filter(propietario=authenticated_user).values_list("id", flat=True)
+            )
+            if tienda_id not in allowed_ids:
+                return Response(
+                    {"detail": "No tienes permiso para ver usuarios de esta tienda."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        # 🔹 Listar usuarios (superuser excluye self; admin_tienda incluye self marcado como deshabilitado)
+        is_admin_requester = authenticated_user.tienda and authenticated_user.tienda.propietario_id == authenticated_user.id  # type: ignore
+        if authenticated_user.is_superuser:
+            # Superuser ve todos, incluso los is_deleted
+            users_qs = UserAccount.objects.exclude(id=authenticated_user.id).filter(is_superuser=False, tienda_id=tienda_id)
+            include_self = False
+        elif is_admin_requester:
+            # Admin ve activos y desactivados, pero no los is_deleted
+            users_qs = UserAccount.objects.filter(is_superuser=False, is_deleted=False, tienda_id=tienda_id)
+            include_self = True
+        else:
+            users_qs = UserAccount.objects.exclude(id=authenticated_user.id).filter(is_superuser=False, is_deleted=False, tienda_id=tienda_id)
+            include_self = False
+        users = users_qs
         ALL_PERMISSIONS = [
             "can_make_sale",
             "can_cancel_sale",
@@ -86,6 +120,10 @@ class GetAllUsersAPIView(APIView):
                 for perm in all_system_permissions
             }
 
+            is_self = (user.id == authenticated_user.id)  # type: ignore
+            # Solo si es admin_tienda y es él mismo, deshabilitar edición de permisos
+            can_modify_permissions = not (include_self and is_self)
+
             user_data = {
                 "id": user.id, # type: ignore
                 "username": user.username,
@@ -98,12 +136,15 @@ class GetAllUsersAPIView(APIView):
                 "is_superuser": user.is_superuser,
                 "es_empleado": user.es_empleado,
                 "desactivate_account": user.desactivate_account,
+                "is_deleted": user.is_deleted,
                 "permissions": permissions_dict,
                 "user_permissions_list": list(user_permission_codenames),
                 "all_permissions_meta": ALL_PERMISSIONS,
                 "tienda": user.tienda.id if user.tienda else None, # type: ignore
                 "tienda_nombre": user.tienda.nombre if user.tienda else None,
-                
+                "is_self": is_self,
+                "can_modify_permissions": can_modify_permissions,
+                "disabled": is_self and include_self,  # para atenuar en gris en frontend
             }
 
             users_data.append(user_data)
@@ -172,7 +213,20 @@ class GetCurrentUserAPIView(APIView):
             if user.tienda else None
         )
 
-        # 🔹 5. Construir la respuesta
+        # 🔹 5. Determinar rol y si es propietario (mismo criterio que CustomTokenObtainPairView)
+        if user.is_superuser:
+            rol = "superuser"
+        elif user.tienda and user.tienda.propietario_id == user.id:  # type: ignore
+            rol = "admin_tienda"
+        elif user.es_empleado:
+            rol = "empleado"
+        else:
+            rol = "usuario"
+
+        es_propietario = bool(user.tienda and user.tienda.propietario_id == user.id)  # type: ignore
+        es_admin_tienda = es_propietario  # alias para frontend
+
+        # 🔹 6. Construir la respuesta
         response_data = {
             'id': user.id,  # type: ignore
             'username': user.username,
@@ -191,15 +245,42 @@ class GetCurrentUserAPIView(APIView):
             'tienda': user.tienda.id if user.tienda else None,  # type: ignore
             'tienda_nombre': user.tienda.nombre if user.tienda else None,
             'tienda_data': tienda_data,
+            'rol': rol,
+            'es_propietario': es_propietario,
+            'es_admin_tienda': es_admin_tienda,
+            'theme': user.theme,
+            'navbar_type': user.navbar_type,
+            'modulos_habilitados': user.modulos_habilitados,
 
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
     
 class CreateUserInTiendaAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSuperUser]
+    permission_classes = [IsAuthenticated, IsAdminTienda]
 
     def post(self, request, tienda_id):
+        # Verificar permiso admin_tienda si no es superuser
+        if not request.user.is_superuser:
+            is_admin = request.user.tienda and request.user.tienda.propietario_id == request.user.id  # type: ignore
+            if not is_admin:
+                return Response(
+                    {"detail": "Solo superuser o admin_tienda puede crear usuarios."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            # Admin solo puede crear en su tienda o sucursales
+            allowed_ids = {request.user.tienda.id}  # type: ignore
+            allowed_ids.update(
+                Tienda.objects.filter(tienda_padre=request.user.tienda).values_list("id", flat=True)  # type: ignore
+            )
+            allowed_ids.update(
+                Tienda.objects.filter(propietario=request.user).values_list("id", flat=True)
+            )
+            if tienda_id not in allowed_ids:
+                return Response(
+                    {"detail": "No puedes crear usuarios en esta tienda."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         tienda = get_object_or_404(Tienda, id=tienda_id)
 
         # Clonar los datos y forzar la tienda
@@ -283,9 +364,22 @@ class CreateUserInTiendaAPIView(APIView):
         )
     
 class UpdateUserAPIView(APIView):
-    permission_classes = [IsAuthenticated,IsSuperUser]
+    permission_classes = [IsAuthenticated,IsAdminTienda]
     def put(self, request, id):
         user = get_object_or_404(UserAccount, id=id)
+        # Admin solo puede editar usuarios de su tienda/sucursales
+        if not request.user.is_superuser:
+            is_admin = request.user.tienda and request.user.tienda.propietario_id == request.user.id  # type: ignore
+            if not is_admin:
+                return Response({"detail": "Solo superuser o admin_tienda puede actualizar usuarios."}, status=status.HTTP_403_FORBIDDEN)
+            allowed_tienda_ids = {request.user.tienda.id}  # type: ignore
+            allowed_tienda_ids.update(Tienda.objects.filter(tienda_padre=request.user.tienda).values_list("id", flat=True))  # type: ignore
+            allowed_tienda_ids.update(Tienda.objects.filter(propietario=request.user).values_list("id", flat=True))
+            if not user.tienda_id or user.tienda_id not in allowed_tienda_ids:
+                return Response({"detail": "No puedes editar usuarios fuera de tu tienda."}, status=status.HTTP_403_FORBIDDEN)
+            # No permitir que admin escale a superuser
+            if request.data.get("is_superuser"):
+                return Response({"detail": "No puedes asignar superuser."}, status=status.HTTP_403_FORBIDDEN)
         serializer = UserAccountSerializer(user, data=request.data, partial=True) 
         if serializer.is_valid():
             serializer.save()
@@ -299,12 +393,25 @@ class UpdateUserAPIView(APIView):
 
 
 class UpdateUserPermissionsView(APIView):
-    permission_classes = [IsAuthenticated, IsSuperUser]
+    permission_classes = [IsAuthenticated, IsAdminTienda]
 
     def put(self, request, user_id):
         try:
             # 🔹 Obtener el usuario
             user = UserAccount.objects.get(id=user_id)
+            # 🔹 Validar scope admin_tienda
+            if not request.user.is_superuser:
+                is_admin = request.user.tienda and request.user.tienda.propietario_id == request.user.id  # type: ignore
+                if not is_admin:
+                    return Response({"detail": "Solo superuser o admin_tienda puede actualizar permisos."}, status=status.HTTP_403_FORBIDDEN)
+                allowed_ids = {request.user.tienda.id}  # type: ignore
+                allowed_ids.update(Tienda.objects.filter(tienda_padre=request.user.tienda).values_list("id", flat=True))  # type: ignore
+                allowed_ids.update(Tienda.objects.filter(propietario=request.user).values_list("id", flat=True))
+                if not user.tienda_id or user.tienda_id not in allowed_ids:
+                    return Response({"detail": "No puedes modificar permisos fuera de tu tienda."}, status=status.HTTP_403_FORBIDDEN)
+            # Bloquear auto-modificación de permisos (admin no puede cambiarse a sí mismo)
+            if user.id == request.user.id:  # type: ignore
+                return Response({"detail": "No puedes modificar tus propios permisos."}, status=status.HTTP_403_FORBIDDEN)
         except UserAccount.DoesNotExist:
             return Response(
                 {"error": "Usuario no encontrado"},
@@ -354,15 +461,25 @@ class UpdateUserPermissionsView(APIView):
         
         
 class UpdateUserPermissionsViewLOTE(APIView):
-    permission_classes = [IsAuthenticated,IsSuperUser]
+    permission_classes = [IsAuthenticated,IsAdminTienda]
     def put(self, request, user_id):
         try:
-            # Obtener el usuario
-            
             print("******** antes ")
             user = UserAccount.objects.get(id=user_id)
             print(user.user_permissions.values_list("codename", flat=True))
             print("******** despues ")
+            # Validar scope admin_tienda si no es superuser
+            if not request.user.is_superuser:
+                is_admin = request.user.tienda and request.user.tienda.propietario_id == request.user.id  # type: ignore
+                if not is_admin:
+                    return Response({"detail": "Solo superuser o admin_tienda puede actualizar permisos en lote."}, status=status.HTTP_403_FORBIDDEN)
+                allowed_ids = {request.user.tienda.id}  # type: ignore
+                allowed_ids.update(Tienda.objects.filter(tienda_padre=request.user.tienda).values_list("id", flat=True))  # type: ignore
+                allowed_ids.update(Tienda.objects.filter(propietario=request.user).values_list("id", flat=True))
+                if not user.tienda_id or user.tienda_id not in allowed_ids:
+                    return Response({"detail": "No puedes modificar permisos fuera de tu tienda."}, status=status.HTTP_403_FORBIDDEN)
+            if user.id == request.user.id:  # type: ignore
+                return Response({"detail": "No puedes modificar tus propios permisos."}, status=status.HTTP_403_FORBIDDEN)
         except UserAccount.DoesNotExist:
             return Response({"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND)
         
@@ -394,17 +511,102 @@ class UpdateUserPermissionsViewLOTE(APIView):
             "updated_permissions": list(updated_permissions),
         }, status=status.HTTP_200_OK)
 
-class DeleteUserAPIView(APIView):
-    permission_classes = [IsAuthenticated,IsSuperUser]
-    def delete(self, request, id):
+
+
+class ToggleUserDeletedAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminTienda]
+
+    def patch(self, request, id):
         user = get_object_or_404(UserAccount, id=id)
-        user.delete()
+
+        if not request.user.is_superuser:
+            is_admin = request.user.tienda and request.user.tienda.propietario_id == request.user.id  # type: ignore
+            if not is_admin:
+                return Response({"detail": "Solo superuser o admin_tienda puede modificar usuarios."}, status=status.HTTP_403_FORBIDDEN)
+            allowed_ids = {request.user.tienda.id}  # type: ignore
+            allowed_ids.update(Tienda.objects.filter(tienda_padre=request.user.tienda).values_list("id", flat=True))  # type: ignore
+            allowed_ids.update(Tienda.objects.filter(propietario=request.user).values_list("id", flat=True))
+            if not user.tienda_id or user.tienda_id not in allowed_ids:
+                return Response({"detail": "No puedes modificar usuarios fuera de tu tienda."}, status=status.HTTP_403_FORBIDDEN)
+
+        if user.is_superuser:
+            return Response({"detail": "No puedes modificar un superuser."}, status=status.HTTP_403_FORBIDDEN)
+
+        value = request.data.get("is_deleted", None)
+        new_value = not user.is_deleted if value is None else bool(value)
+
+        user.is_deleted = new_value
+        user.is_active = not new_value
+
+        if new_value:
+            deleted_tag = f"is_deleted_{user.id}"
+            user.username = deleted_tag
+            user.first_name = deleted_tag
+            user.save()
+        else:
+            user.save()
+
         return Response({
-            "message": "Usuario eliminado exitosamente"
-        }, status=status.HTTP_204_NO_CONTENT)
+            "message": "Estado de eliminación actualizado.",
+
+            "id": user.id,
+            "is_deleted": user.is_deleted,
+            "is_active": user.is_active,
+            "username": user.username,
+            "first_name": user.first_name,
+        }, status=status.HTTP_200_OK)
+
+
+class UpdateUserBasicDataAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminTienda]
+
+    def patch(self, request, id):
+        user = get_object_or_404(UserAccount, id=id)
+
+        # Validar scope (superuser o admin de su tienda/sucursales)
+        if not request.user.is_superuser:
+            is_admin = request.user.tienda and request.user.tienda.propietario_id == request.user.id  # type: ignore
+            if not is_admin:
+                return Response({"detail": "Solo superuser o admin_tienda puede actualizar usuarios."}, status=status.HTTP_403_FORBIDDEN)
+            allowed_ids = {request.user.tienda.id}  # type: ignore
+            allowed_ids.update(Tienda.objects.filter(tienda_padre=request.user.tienda).values_list("id", flat=True))  # type: ignore
+            allowed_ids.update(Tienda.objects.filter(propietario=request.user).values_list("id", flat=True))
+            if not user.tienda_id or user.tienda_id not in allowed_ids:
+                return Response({"detail": "No puedes modificar usuarios fuera de tu tienda."}, status=status.HTTP_403_FORBIDDEN)
+        if user.is_superuser:
+            return Response({"detail": "No puedes modificar un superuser."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Solo se actualizan estos tres campos, sin importar is_deleted/is_active
+        username = request.data.get("username")
+        first_name = request.data.get("first_name")
+        last_name = request.data.get("last_name")
+
+        if username is not None:
+            if not str(username).strip():
+                return Response({"error": "username no puede estar vacío."}, status=status.HTTP_400_BAD_REQUEST)
+            user.username = str(username).strip().lower()
+        if first_name is not None:
+            user.first_name = first_name
+        if last_name is not None:
+            user.last_name = last_name
+
+        try:
+            user.save()
+        except Exception as e:
+            return Response({"error": f"No se pudo guardar: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            "message": "Datos básicos actualizados exitosamente.",
+            "id": user.id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "is_deleted": user.is_deleted,
+            "is_active": user.is_active,
+        }, status=status.HTTP_200_OK)
 
 class UserPermissionsView(APIView):
-    permission_classes = [IsAuthenticated,IsSuperUser]
+    permission_classes = [IsAuthenticated,IsAdminTienda]
     def get(self, request):
         user = request.user
         all_permissions = dict(
@@ -414,6 +616,25 @@ class UserPermissionsView(APIView):
             "username": user.username,
             "permissions": all_permissions
         })
+
+class AdminResetPasswordAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsSuperUser]
+
+    def post(self, request, id):
+        user = get_object_or_404(UserAccount, id=id)
+
+        new_password = request.data.get("new_password")
+        if not new_password:
+            return Response({"error": "Debes enviar 'new_password'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.save()
+
+        return Response({
+            "message": "Contraseña actualizada exitosamente.",
+            "id": user.id,
+            "username": user.username,
+        }, status=status.HTTP_200_OK)
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
 
@@ -421,23 +642,93 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         tokens = serializer.validated_data
-        user_id = serializer.user.id  # Obtiene el ID del usuario
+        user = serializer.user
+
+        # Determinar el rol del usuario
+        if user.is_superuser:
+            rol = "superuser"
+        elif user.tienda and user.tienda.propietario == user:
+            rol = "admin_tienda"
+        elif user.es_empleado:
+            rol = "empleado"
+        else:
+            rol = "usuario"
+
+        # Contar tiendas del usuario
+        tiendas_count = user.tiendas_propias.count() if hasattr(user, 'tiendas_propias') else 0
+        tienda_data = None
+        tiendas_hijas_count = 0
+
+        if user.tienda:
+            from apps.tienda.serializers import TiendaSerializer
+            tienda_data = TiendaSerializer(user.tienda).data
+            tiendas_hijas_count = user.tienda.sucursales.filter(is_deleted=False).count()
+
         return Response({
             "refresh": tokens["refresh"],
             "access": tokens["access"],
-            "user_id": user_id,
-            "user" : UserSerializer(serializer.user).data,
-            "tienda":  TiendaSerializer(serializer.user.tienda).data if serializer.user.tienda else None
-
+            "user_id": user.id,
+            "user": UserSerializer(user).data,
+            "tienda": tienda_data,
+            "rol": rol,
+            "mis_tiendas_count": tiendas_count,
+            "mis_sucursales_count": tiendas_hijas_count,
         })
+
+class UserConfigUpdateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request):
+        user = request.user
+
+        theme = request.data.get("theme")
+        navbar_type = request.data.get("navbar_type")
+        modulos_habilitados = request.data.get("modulos_habilitados")
+
+        if theme is not None:
+            if theme not in ["light", "dark"]:
+                return Response(
+                    {"error": "theme debe ser 'light' o 'dark'."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            user.theme = theme
+
+        if navbar_type is not None:
+            if navbar_type not in ["top", "normal"]:
+                return Response(
+                    {"error": "navbar_type debe ser 'top' o 'normal'."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            user.navbar_type = navbar_type
+
+        if modulos_habilitados is not None:
+            if not isinstance(modulos_habilitados, list):
+                return Response(
+                    {"error": "modulos_habilitados debe ser un arreglo."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            user.modulos_habilitados = modulos_habilitados
+
+        user.save()
+        return Response(
+            {
+                "message": "Configuración actualizada exitosamente.",
+                "theme": user.theme,
+                "navbar_type": user.navbar_type,
+                "modulos_habilitados": user.modulos_habilitados,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class UpdatePermissionsAPIView(APIView):
 
-    permission_classes = [IsAuthenticated,IsSuperUser]
+    permission_classes = [IsAuthenticated,IsAdminTienda]
     def patch(self, request, user_id):
         try:
-            # Verifica que el usuario sea superusuario
-            if not request.user.is_superuser:
+            # Verifica que sea superuser o admin_tienda
+            is_admin = request.user.is_superuser or (request.user.tienda and request.user.tienda.propietario_id == request.user.id)  # type: ignore
+            if not is_admin:
                 return Response(
                     {"error": "No tienes permisos para realizar esta acción."},
                     status=status.HTTP_403_FORBIDDEN,
@@ -445,6 +736,16 @@ class UpdatePermissionsAPIView(APIView):
 
             # Obtiene el usuario al que se le asignarán los permisos
             user = User.objects.get(id=user_id)
+
+            # Si es admin_tienda, validar que el target esté en su tienda/sucursales
+            if not request.user.is_superuser:
+                allowed_ids = {request.user.tienda.id}  # type: ignore
+                allowed_ids.update(Tienda.objects.filter(tienda_padre=request.user.tienda).values_list("id", flat=True))  # type: ignore
+                allowed_ids.update(Tienda.objects.filter(propietario=request.user).values_list("id", flat=True))
+                if not user.tienda_id or user.tienda_id not in allowed_ids:
+                    return Response({"error": "No puedes modificar permisos fuera de tu tienda."}, status=status.HTTP_403_FORBIDDEN)
+            if user.id == request.user.id:  # type: ignore
+                return Response({"error": "No puedes modificar tus propios permisos."}, status=status.HTTP_403_FORBIDDEN)
 
             # Datos enviados en el cuerpo de la solicitud
             permissions_data = request.data  # Ejemplo: {"can_make_sale": true, "can_delete_inventory": false}

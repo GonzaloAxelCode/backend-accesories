@@ -19,12 +19,39 @@ class Tienda(models.Model):
     telefono = models.CharField(max_length=15, null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
 
-    sol_user = models.CharField(max_length=50, null=True, blank=True)
-    sol_password = models.TextField(null=True, blank=True)
-
     logo_img = models.ImageField(upload_to='tienda_logos/', null=True, blank=True)
+    logo_img_dark = models.ImageField(upload_to='tienda_logos/', null=True, blank=True)
+    banner_img = models.ImageField(upload_to='tienda_banners/', null=True, blank=True)
+    certificado = models.FileField(upload_to='tienda_certificados/', null=True, blank=True)
+    design_boleta = models.CharField(max_length=100, default='', blank=True)
+    design_factura = models.CharField(max_length=100, default='', blank=True)
     activo = models.BooleanField(default=True)
     is_deleted = models.BooleanField(default=False)
+
+    def save(self, *args, **kwargs):
+        if self.is_deleted:
+            self.activo = False
+        if self.certificado:
+            name = self.certificado.name.lower()
+            if not name.endswith(('.p12', '.pfx', '.pem')):
+                raise ValueError("El certificado debe ser un archivo .p12, .pfx o .pem")
+        super().save(*args, **kwargs)
+
+    propietario = models.ForeignKey(
+        'user.UserAccount',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='tiendas_propias'
+    )
+
+    tienda_padre = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='sucursales'
+    )
 
     date_created = models.DateTimeField(auto_now_add=True, null=True)
     correlativo_inicial_boleta = models.IntegerField(default=1,null=True, blank=True)

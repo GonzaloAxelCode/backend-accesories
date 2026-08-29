@@ -105,3 +105,29 @@ class CanUpdateProveedorPermission(HasCustomPermission):
 class CanDeleteProveedorPermission(HasCustomPermission):
     perm_code = 'user.can_delete_proveedor'
 
+
+# ============================================
+# PERMISO COMBINADO: SUPERUSER + ADMIN TIENDA
+# ============================================
+
+class IsAdminTienda(permissions.BasePermission):
+    """
+    Permite acceso a:
+    - Superusers (acceso total)
+    - Admin de tienda (propietario de la tienda)
+    """
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated
+
+    def has_object_permission(self, request, view, obj):
+        # Superuser tiene acceso total
+        if request.user.is_superuser:
+            return True
+        # Admin tienda: verificar que sea propietario
+        if hasattr(obj, 'propietario'):
+            return obj.propietario == request.user
+        # Si el objeto tiene FK a tienda, verificar propietario de esa tienda
+        if hasattr(obj, 'tienda') and obj.tienda:
+            return obj.tienda.propietario == request.user
+        return False
+

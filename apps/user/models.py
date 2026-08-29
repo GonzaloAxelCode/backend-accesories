@@ -6,6 +6,10 @@ from apps import tienda
 from apps.tienda.models import Tienda
 
 
+def default_modulos_habilitados():
+    return ["tiktok", "compras", "guias-de-remision"]
+
+
 class UserManager(BaseUserManager):
     def create_user(self, username, password=None, **extra_fields):
         if not username:
@@ -50,11 +54,26 @@ class UserAccount(AbstractBaseUser, PermissionsMixin):
     is_superuser = models.BooleanField(default=False)
     es_empleado = models.BooleanField(default=False)
     desactivate_account = models.BooleanField(default=False)
+    is_deleted = models.BooleanField(default=False)
     tienda = models.ForeignKey(
        Tienda, on_delete=models.CASCADE, null=True, blank=True, related_name='users_tienda' # type: ignore
     )
+    theme = models.CharField(
+        max_length=10,
+        choices=[("light", "Light"), ("dark", "Dark")],
+        default="light",
+    )
+    navbar_type = models.CharField(
+        max_length=10,
+        choices=[("top", "Top"), ("normal", "Normal")],
+        default="top",
+    )
+    modulos_habilitados = models.JSONField(
+        default=default_modulos_habilitados,
+        blank=True,
+    )
     objects = UserManager()
-    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)
     USERNAME_FIELD = "username"
     REQUIRED_FIELDS = ["first_name","last_name"]
 
@@ -91,7 +110,8 @@ class UserAccount(AbstractBaseUser, PermissionsMixin):
         ]
         ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
 
-    def __str__(self):
+
+def __str__(self):
         return self.username
 
 

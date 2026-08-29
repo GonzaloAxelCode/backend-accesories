@@ -1,54 +1,111 @@
-
 from django.db import models
-from apps.cliente.models import Cliente
 from apps.producto.models import Producto
 from apps.tienda.models import Tienda
 from core import settings
-from django.utils import timezone
+
 User = settings.AUTH_USER_MODEL
-from django.utils.timezone import now
 
 
 class Pedido(models.Model):
     ESTADO_CHOICES = [
         ('COTIZADO', 'Cotizado'),
         ('PENDIENTE', 'Pendiente'),
-        ('REALIZADO', 'Realizado'),
+        ('CONFIRMADO', 'Confirmado'),
+        ('EN_PREPARACION', 'En preparación'),
+        ('LISTO', 'Listo'),
+        ('ENTREGADO', 'Entregado'),
         ('CANCELADO', 'Cancelado'),
     ]
 
+    TIPO_PEDIDO_CHOICES = [
+        ('MESA', 'Mesa'),
+        ('DELIVERY', 'Delivery'),
+        ('TAKEAWAY', 'Takeaway'),
+        ('MOSTRADOR', 'Mostrador'),
+    ]
+
+    CANAL_CHOICES = [
+        ('PRESENCIAL', 'Presencial'),
+        ('WHATSAPP', 'WhatsApp'),
+        ('WEB', 'Web'),
+        ('TELEFONO', 'Teléfono'),
+        ('TIKTOK', 'TikTok'),
+    ]
+
+    ESTADO_PAGO_CHOICES = [
+        ('PENDIENTE', 'Pendiente'),
+        ('PARCIAL', 'Parcial'),
+        ('PAGADO', 'Pagado'),
+    ]
+
+    PRIORIDAD_CHOICES = [
+        ('NORMAL', 'Normal'),
+        ('URGENTE', 'Urgente'),
+    ]
+
+    # Relaciones
     usuario = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     tienda = models.ForeignKey(Tienda, on_delete=models.SET_NULL, null=True)
+
+    # Identificación
+    numero_pedido = models.CharField(max_length=50, unique=True)
+
+    # Tipo y canal
+    tipo_pedido = models.CharField(max_length=20, choices=TIPO_PEDIDO_CHOICES, default='MOSTRADOR')
+    canal_venta = models.CharField(max_length=20, choices=CANAL_CHOICES, default='PRESENCIAL')
+
+    # Fechas
     fecha_hora = models.DateTimeField()
     fecha_realizacion = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    fecha_vencimiento = models.DateTimeField(null=True, blank=True)
+    fecha_entrega_estimada = models.DateTimeField(null=True, blank=True)
     fecha_cancelacion = models.DateTimeField(null=True, blank=True)
-    metodo_pago = models.CharField(max_length=100, null=True)
-    estado = models.CharField(max_length=100, choices=ESTADO_CHOICES, default='COTIZADO')
 
+    # Estado
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='COTIZADO')
+    prioridad = models.CharField(max_length=10, choices=PRIORIDAD_CHOICES, default='NORMAL')
     activo = models.BooleanField(default=True)
-    total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True)
-    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True)
-    gravado_total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True)
-    igv_total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True)
-    productos_json = models.JSONField(default=list, blank=True)
-    descuento_total = models.DecimalField(default=0, blank=True, max_digits=10, decimal_places=2)
+
+    # Montos
+    metodo_pago = models.CharField(max_length=100, null=True, blank=True)
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    gravado_total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    igv_total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    descuento_total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    costo_envio = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+
+    # Estado de pago
+    estado_pago = models.CharField(max_length=10, choices=ESTADO_PAGO_CHOICES, default='PENDIENTE')
+    monto_adelanto = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    metodo_pago_adelanto = models.CharField(max_length=100, null=True, blank=True)
 
     # Datos del cliente
-    tipo_documento_cliente = models.CharField(max_length=2, null=True)
-    numero_documento_cliente = models.CharField(max_length=15, null=True)
-    nombre_cliente = models.CharField(max_length=255, null=True)
-    email_cliente = models.EmailField(max_length=255, null=True)
-    telefono_cliente = models.EmailField(max_length=255, null=True)
-    direccion_cliente = models.EmailField(max_length=255, null=True)
+    tipo_documento_cliente = models.CharField(max_length=2, null=True, blank=True)
+    numero_documento_cliente = models.CharField(max_length=15, null=True, blank=True)
+    nombre_cliente = models.CharField(max_length=255, null=True, blank=True)
+    email_cliente = models.EmailField(max_length=255, null=True, blank=True)
+    telefono_cliente = models.CharField(max_length=20, null=True, blank=True)
 
-    # Extras
-    numero_pedido = models.CharField(max_length=50, unique=True)
+    # Dirección de envío
+    direccion_envio = models.TextField(null=True, blank=True)
+    referencia_ubicacion = models.CharField(max_length=255, null=True, blank=True)
+
+    # Notas
     observaciones = models.TextField(null=True, blank=True)
+    notas_internas = models.TextField(null=True, blank=True)
+    motivo_cancelacion = models.TextField(null=True, blank=True)
+
+    # Referencia externa
+    referencia_externa = models.CharField(max_length=100, null=True, blank=True)
+
+    # JSON de productos
+    productos_json = models.JSONField(default=list, blank=True)
 
     date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 
     def __str__(self):
-        return f"{self.numero_pedido} - {self.nombre_cliente}"
+        return f"{self.numero_pedido} - {self.nombre_cliente or 'Sin cliente'}"
 
     class Meta:
         ordering = ["-date_created"]

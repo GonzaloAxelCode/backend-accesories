@@ -2,10 +2,8 @@ from decimal import Decimal
 from datetime import datetime
 from math import ceil
 from zoneinfo import ZoneInfo
-import json
 
 from django.db import transaction
-from django.db.models import Sum, Count
 from django.utils import timezone
 from django.utils.timezone import make_aware
 
@@ -15,7 +13,6 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
 
-from apps.venta.utils import ClienteService, VentaService
 from apps.inventario.models import Inventario
 from .models import Pedido, PedidoProducto
 
@@ -34,10 +31,10 @@ class CrearPedidoView(APIView):
             data = request.data
             tienda = request.user.tienda
             usuario = request.user
-            cliente_data = ClienteService.resolve_cliente(data.get("cliente"), tienda)
 
             fecha_hora = timezone.now()
             observaciones = data.get("observaciones", "")
+            notas_internas = data.get("notas_internas", "")
 
             # Generar numero_pedido
             tz = ZoneInfo("America/Lima")
@@ -58,6 +55,22 @@ class CrearPedidoView(APIView):
 
             numero_pedido = f"{prefijo}-{nuevo_correlativo:04d}"
 
+            # Datos del cliente
+            cliente_data = data.get("cliente", {})
+
+            # Tipo de pedido y canal
+            tipo_pedido = data.get("tipo_pedido", "MOSTRADOR")
+            canal_venta = data.get("canal_venta", "PRESENCIAL")
+            prioridad = data.get("prioridad", "NORMAL")
+
+            # Dirección de envío (si es delivery)
+            direccion_envio = data.get("direccion_envio", "")
+            referencia_ubicacion = data.get("referencia_ubicacion", "")
+            costo_envio = Decimal(str(data.get("costo_envio", 0)))
+
+            # Referencia externa
+            referencia_externa = data.get("referencia_externa", "")
+
             productos_registrados = []
             subtotal = Decimal("0.00")
             gravado_total = Decimal("0.00")
@@ -68,23 +81,30 @@ class CrearPedidoView(APIView):
                 pedido = Pedido.objects.create(
                     usuario=usuario,
                     tienda=tienda,
+                    numero_pedido=numero_pedido,
+                    tipo_pedido=tipo_pedido,
+                    canal_venta=canal_venta,
+                    prioridad=prioridad,
                     metodo_pago=data.get("metodoPago"),
                     fecha_hora=fecha_hora,
                     estado="COTIZADO",
-                    numero_pedido=numero_pedido,
                     observaciones=observaciones,
+                    notas_internas=notas_internas,
                     tipo_documento_cliente=cliente_data.get("tipo_documento", "1"),
                     numero_documento_cliente=cliente_data.get("numero"),
                     nombre_cliente=cliente_data.get("nombre_completo"),
                     email_cliente=cliente_data.get("correo_cliente"),
                     telefono_cliente=cliente_data.get("telefono_cliente"),
-                    direccion_cliente=cliente_data.get("direccion_cliente"),
+                    direccion_envio=direccion_envio,
+                    referencia_ubicacion=referencia_ubicacion,
+                    costo_envio=costo_envio,
+                    referencia_externa=referencia_externa,
                 )
 
                 for item in data["productos"]:
                     inventario_id = item["inventarioId"]
                     cantidad = int(item["cantidad_final"])
-                    descuento = Decimal(item.get("descuento", 0))
+                    descuento = Decimal(str(item.get("descuento", 0)))
 
                     try:
                         inventario = Inventario.objects.get(id=inventario_id)
@@ -94,7 +114,6 @@ class CrearPedidoView(APIView):
                             status=status.HTTP_404_NOT_FOUND,
                         )
 
-                    # Verificar stock (sin bloquear ni descontar)
                     stock_ok = inventario.cantidad >= cantidad
 
                     precio_unitario_original = Decimal(inventario.costo_venta)
@@ -141,7 +160,7 @@ class CrearPedidoView(APIView):
                 pedido.subtotal = subtotal
                 pedido.gravado_total = gravado_total
                 pedido.igv_total = igv_total
-                pedido.total = total
+                pedido.total = total + costo_envio
                 pedido.productos_json = productos_registrados
                 pedido.save()
 
@@ -149,13 +168,20 @@ class CrearPedidoView(APIView):
                 "pedido": {
                     "id": pedido.id,
                     "numero_pedido": pedido.numero_pedido,
+                    "tipo_pedido": pedido.tipo_pedido,
+                    "canal_venta": pedido.canal_venta,
+                    "prioridad": pedido.prioridad,
                     "estado": pedido.estado,
                     "metodo_pago": pedido.metodo_pago,
-                    "total": float(pedido.total),
                     "subtotal": float(pedido.subtotal),
+                    "gravado_total": float(pedido.gravado_total),
                     "igv_total": float(pedido.igv_total),
+                    "costo_envio": float(pedido.costo_envio),
+                    "total": float(pedido.total),
                     "nombre_cliente": pedido.nombre_cliente,
-                "fecha_hora": pedido.fecha_hora.isoformat() if pedido.fecha_hora else None,
+                    "telefono_cliente": pedido.telefono_cliente,
+                    "direccion_envio": pedido.direccion_envio,
+                    "fecha_hora": pedido.fecha_hora.isoformat() if pedido.fecha_hora else None,
                     "observaciones": pedido.observaciones,
                     "productos": productos_registrados,
                 }
@@ -178,103 +204,7 @@ class CrearPedidoView(APIView):
             )
 
 
-class ListaPedidosView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        tienda_id = request.user.tienda
-        from_date = request.data.get("from_date")
-        to_date = request.data.get("to_date")
-
-        if not from_date or not to_date:
-            return Response(
-                {"error": "Se debe proporcionar un rango de fechas válido"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        tz = ZoneInfo("America/Lima")
-
-        # Soporta formato array [year, month, day] (mes 0-indexed) o string "YYYY-MM-DD"
-        if isinstance(from_date, list):
-            from_date_obj = make_aware(
-                datetime(from_date[0], from_date[1] + 1, from_date[2], 0, 0, 0),
-                timezone=tz,
-            )
-        else:
-            from_date_obj = datetime.strptime(from_date, "%Y-%m-%d").replace(
-                hour=0, minute=0, second=0, microsecond=0, tzinfo=tz
-            )
-
-        if isinstance(to_date, list):
-            to_date_obj = make_aware(
-                datetime(to_date[0], to_date[1] + 1, to_date[2], 23, 59, 59),
-                timezone=tz,
-            )
-        else:
-            to_date_obj = datetime.strptime(to_date, "%Y-%m-%d").replace(
-                hour=23, minute=59, second=59, microsecond=0, tzinfo=tz
-            )
-
-        pedidos = Pedido.objects.filter(
-            tienda_id=tienda_id,
-            activo=True,
-            fecha_hora__range=(from_date_obj, to_date_obj),
-        ).select_related(
-            "usuario", "tienda"
-        ).prefetch_related(
-            "pedidoproducto_set__producto"
-        )
-
-        pedidos_json = []
-        for pedido in pedidos:
-            productos = []
-            for pp in pedido.pedidoproducto_set.all():
-                productos.append({
-                    "id": pp.id,
-                    "producto": pp.producto.id if pp.producto else None,
-                    "producto_nombre": pp.producto.nombre if pp.producto else None,
-                    "cantidad": pp.cantidad,
-                    "stock_disponible": pp.stock_disponible,
-                    "valor_unitario": float(pp.valor_unitario),
-                    "valor_venta": float(pp.valor_venta),
-                    "igv": float(pp.igv),
-                    "precio_unitario": float(pp.precio_unitario),
-                    "costo_original": float(pp.costo_original),
-                    "descuento": float(pp.descuento),
-                })
-
-            pedidos_json.append({
-                "id": pedido.id,
-                "numero_pedido": pedido.numero_pedido,
-                "usuario": pedido.usuario.id if pedido.usuario else None,
-                "tienda": pedido.tienda.id if pedido.tienda else None,
-                "fecha_hora": pedido.fecha_hora.isoformat(),
-                "metodo_pago": pedido.metodo_pago,
-                "estado": pedido.estado,
-                "activo": pedido.activo,
-                "total": float(pedido.total),
-                "subtotal": float(pedido.subtotal),
-                "gravado_total": float(pedido.gravado_total),
-                "igv_total": float(pedido.igv_total),
-                "descuento_total": float(pedido.descuento_total),
-                "nombre_cliente": pedido.nombre_cliente,
-                "numero_documento_cliente": pedido.numero_documento_cliente,
-                "email_cliente": pedido.email_cliente,
-                "telefono_cliente": pedido.telefono_cliente,
-                "direccion_cliente": pedido.direccion_cliente,
-                "observaciones": pedido.observaciones,
-                "productos": productos,
-                "productos_json": pedido.productos_json,
-                "date_created": pedido.date_created.isoformat() if pedido.date_created else None,
-            })
-
-        return Response({
-            "count": len(pedidos_json),
-            "results": pedidos_json,
-        }, status=status.HTTP_200_OK)
-
-
-class BuscarPedidoView(APIView):
+class ListarPedidosView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -289,41 +219,56 @@ class BuscarPedidoView(APIView):
         to_date = query.get('to_date')
 
         if from_date and to_date:
-            tz = ZoneInfo("America/Lima")
-
+            tz = timezone.get_current_timezone()
             from_date_obj = make_aware(
-                datetime(from_date[0], from_date[1] + 1, from_date[2], 0, 0, 0),
-                timezone=tz,
+                datetime(year=from_date[0], month=from_date[1] + 1, day=from_date[2], hour=0, minute=0, second=0),
+                timezone=tz
             )
             to_date_obj = make_aware(
-                datetime(to_date[0], to_date[1] + 1, to_date[2], 23, 59, 59),
-                timezone=tz,
+                datetime(year=to_date[0], month=to_date[1] + 1, day=to_date[2], hour=23, minute=59, second=59),
+                timezone=tz
             )
             pedidos = pedidos.filter(fecha_hora__range=(from_date_obj, to_date_obj))
 
         numero_pedido = query.get('numero_pedido')
         metodo_pago = query.get('metodo_pago')
         estado = query.get('estado')
+        tipo_pedido = query.get('tipo_pedido')
+        canal_venta = query.get('canal_venta')
+        estado_pago = query.get('estado_pago')
+        prioridad = query.get('prioridad')
         nombre_cliente = query.get('nombre_cliente')
         numero_documento_cliente = query.get('numero_documento_cliente')
-        stock_disponible = query.get('stock_disponible')
+        email_cliente = query.get('email_cliente')
+        telefono_cliente = query.get('telefono_cliente')
+        referencia_externa = query.get('referencia_externa')
 
-        if numero_pedido is not "":
+        if numero_pedido is not None and numero_pedido != "":
             pedidos = pedidos.filter(numero_pedido__icontains=numero_pedido)
-        if metodo_pago is not "":
+        if metodo_pago is not None and metodo_pago != "":
             pedidos = pedidos.filter(metodo_pago__icontains=metodo_pago)
-        if estado is not "":
-            pedidos = pedidos.filter(estado__icontains=estado)
-        if nombre_cliente is not "":
+        if estado is not None and estado != "":
+            pedidos = pedidos.filter(estado=estado)
+        if tipo_pedido is not None and tipo_pedido != "":
+            pedidos = pedidos.filter(tipo_pedido=tipo_pedido)
+        if canal_venta is not None and canal_venta != "":
+            pedidos = pedidos.filter(canal_venta=canal_venta)
+        if estado_pago is not None and estado_pago != "":
+            pedidos = pedidos.filter(estado_pago=estado_pago)
+        if prioridad is not None and prioridad != "":
+            pedidos = pedidos.filter(prioridad=prioridad)
+        if nombre_cliente is not None and nombre_cliente != "":
             pedidos = pedidos.filter(nombre_cliente__icontains=nombre_cliente)
-        if numero_documento_cliente is not "":
+        if numero_documento_cliente is not None and numero_documento_cliente != "":
             pedidos = pedidos.filter(numero_documento_cliente__icontains=numero_documento_cliente)
-        if stock_disponible is not "":
-            stock_bool = stock_disponible.lower() == 'true' if isinstance(stock_disponible, str) else bool(stock_disponible)
-            if stock_bool:
-                pedidos = pedidos.filter(pedidoproducto__stock_disponible=True).distinct()
-            else:
-                pedidos = pedidos.filter(pedidoproducto__stock_disponible=False).distinct()
+        if email_cliente is not None and email_cliente != "":
+            pedidos = pedidos.filter(email_cliente__icontains=email_cliente)
+        if telefono_cliente is not None and telefono_cliente != "":
+            pedidos = pedidos.filter(telefono_cliente__icontains=telefono_cliente)
+        if referencia_externa is not None and referencia_externa != "":
+            pedidos = pedidos.filter(referencia_externa__icontains=referencia_externa)
+
+        pedidos = pedidos.order_by('-date_created')
 
         total_pedidos = pedidos.count()
         paginator = PedidoPagination()
@@ -358,23 +303,36 @@ class BuscarPedidoView(APIView):
                 "numero_pedido": pedido.numero_pedido,
                 "usuario": pedido.usuario.id if pedido.usuario else None,
                 "tienda": pedido.tienda.id if pedido.tienda else None,
+                "tipo_pedido": pedido.tipo_pedido,
+                "canal_venta": pedido.canal_venta,
+                "prioridad": pedido.prioridad,
                 "fecha_hora": pedido.fecha_hora.isoformat(),
                 "fecha_realizacion": pedido.fecha_realizacion.isoformat() if pedido.fecha_realizacion else None,
+                "fecha_vencimiento": pedido.fecha_vencimiento.isoformat() if pedido.fecha_vencimiento else None,
+                "fecha_entrega_estimada": pedido.fecha_entrega_estimada.isoformat() if pedido.fecha_entrega_estimada else None,
                 "fecha_cancelacion": pedido.fecha_cancelacion.isoformat() if pedido.fecha_cancelacion else None,
                 "metodo_pago": pedido.metodo_pago,
                 "estado": pedido.estado,
+                "estado_pago": pedido.estado_pago,
                 "activo": pedido.activo,
-                "total": float(pedido.total),
                 "subtotal": float(pedido.subtotal),
                 "gravado_total": float(pedido.gravado_total),
                 "igv_total": float(pedido.igv_total),
                 "descuento_total": float(pedido.descuento_total),
+                "costo_envio": float(pedido.costo_envio),
+                "total": float(pedido.total),
+                "monto_adelanto": float(pedido.monto_adelanto),
+                "metodo_pago_adelanto": pedido.metodo_pago_adelanto,
                 "nombre_cliente": pedido.nombre_cliente,
                 "numero_documento_cliente": pedido.numero_documento_cliente,
                 "email_cliente": pedido.email_cliente,
                 "telefono_cliente": pedido.telefono_cliente,
-                "direccion_cliente": pedido.direccion_cliente,
+                "direccion_envio": pedido.direccion_envio,
+                "referencia_ubicacion": pedido.referencia_ubicacion,
                 "observaciones": pedido.observaciones,
+                "notas_internas": pedido.notas_internas,
+                "motivo_cancelacion": pedido.motivo_cancelacion,
+                "referencia_externa": pedido.referencia_externa,
                 "productos": productos_json,
                 "productos_json": pedido.productos_json,
                 "date_created": pedido.date_created.isoformat() if pedido.date_created else None,
@@ -389,6 +347,199 @@ class BuscarPedidoView(APIView):
             "results": pedidos_json,
             "search_pedidos_found": "pedidos_found" if total_pedidos > 0 else "pedidos_not_found",
         })
+
+
+class ActualizarPedidoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, pedido_id):
+        try:
+            tienda_id = request.user.tienda
+
+            try:
+                pedido = Pedido.objects.get(id=pedido_id, tienda_id=tienda_id, activo=True)
+            except Pedido.DoesNotExist:
+                return Response(
+                    {"error": "Pedido no encontrado"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if pedido.estado in ['CANCELADO', 'ENTREGADO']:
+                return Response(
+                    {"error": f"No se puede editar un pedido {pedido.estado.lower()}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            data = request.data
+
+            # Actualizar datos del cliente
+            cliente_data = data.get('cliente', None)
+            if cliente_data:
+                if 'tipo_documento' in cliente_data:
+                    pedido.tipo_documento_cliente = cliente_data['tipo_documento']
+                if 'numero' in cliente_data:
+                    pedido.numero_documento_cliente = cliente_data['numero']
+                if 'nombre_completo' in cliente_data:
+                    pedido.nombre_cliente = cliente_data['nombre_completo']
+                if 'correo_cliente' in cliente_data:
+                    pedido.email_cliente = cliente_data['correo_cliente']
+                if 'telefono_cliente' in cliente_data:
+                    pedido.telefono_cliente = cliente_data['telefono_cliente']
+
+            # Actualizar campos simples
+            if 'tipo_pedido' in data:
+                pedido.tipo_pedido = data['tipo_pedido']
+            if 'canal_venta' in data:
+                pedido.canal_venta = data['canal_venta']
+            if 'prioridad' in data:
+                pedido.prioridad = data['prioridad']
+            if 'metodo_pago' in data:
+                pedido.metodo_pago = data['metodo_pago']
+            if 'estado_pago' in data:
+                pedido.estado_pago = data['estado_pago']
+            if 'monto_adelanto' in data:
+                pedido.monto_adelanto = Decimal(str(data['monto_adelanto']))
+            if 'metodo_pago_adelanto' in data:
+                pedido.metodo_pago_adelanto = data['metodo_pago_adelanto']
+            if 'fecha_vencimiento' in data:
+                pedido.fecha_vencimiento = data['fecha_vencimiento']
+            if 'fecha_entrega_estimada' in data:
+                pedido.fecha_entrega_estimada = data['fecha_entrega_estimada']
+            if 'observaciones' in data:
+                pedido.observaciones = data['observaciones']
+            if 'notas_internas' in data:
+                pedido.notas_internas = data['notas_internas']
+            if 'direccion_envio' in data:
+                pedido.direccion_envio = data['direccion_envio']
+            if 'referencia_ubicacion' in data:
+                pedido.referencia_ubicacion = data['referencia_ubicacion']
+            if 'costo_envio' in data:
+                pedido.costo_envio = Decimal(str(data['costo_envio']))
+            if 'referencia_externa' in data:
+                pedido.referencia_externa = data['referencia_externa']
+
+            # Actualizar productos
+            productos_data = data.get('productos', None)
+            if productos_data is not None:
+                with transaction.atomic():
+                    # Eliminar productos actuales
+                    PedidoProducto.objects.filter(pedido=pedido).delete()
+
+                    subtotal = Decimal("0.00")
+                    gravado_total = Decimal("0.00")
+                    igv_total = Decimal("0.00")
+                    total = Decimal("0.00")
+                    productos_registrados = []
+
+                    for item in productos_data:
+                        inventario_id = item["inventarioId"]
+                        cantidad = int(item["cantidad_final"])
+                        descuento = Decimal(str(item.get("descuento", 0)))
+
+                        try:
+                            inventario = Inventario.objects.get(id=inventario_id)
+                        except Inventario.DoesNotExist:
+                            return Response(
+                                {"error": f"Inventario {inventario_id} no encontrado"},
+                                status=status.HTTP_404_NOT_FOUND,
+                            )
+
+                        stock_ok = inventario.cantidad >= cantidad
+
+                        precio_unitario_original = Decimal(inventario.costo_venta)
+                        precio_unitario = precio_unitario_original - (descuento / cantidad)
+                        valor_unitario = precio_unitario / (Decimal("1.00") + Decimal("0.18"))
+                        valor_venta = valor_unitario * cantidad
+                        igv = valor_venta * Decimal("0.18")
+
+                        PedidoProducto.objects.create(
+                            pedido=pedido,
+                            producto=inventario.producto,
+                            cantidad=cantidad,
+                            stock_disponible=stock_ok,
+                            valor_unitario=valor_unitario,
+                            valor_venta=valor_venta,
+                            base_igv=valor_venta,
+                            porcentaje_igv=Decimal("18.00"),
+                            igv=igv,
+                            tipo_afectacion_igv="10",
+                            total_impuestos=igv,
+                            precio_unitario=precio_unitario,
+                            descuento=descuento,
+                            costo_original=precio_unitario_original,
+                        )
+
+                        subtotal += valor_venta
+                        gravado_total += valor_venta
+                        igv_total += igv
+                        total += precio_unitario * cantidad
+
+                        productos_registrados.append({
+                            "producto_id": inventario.producto.id,
+                            "producto_nombre": inventario.producto.nombre,
+                            "cantidad": cantidad,
+                            "stock_disponible": stock_ok,
+                            "valor_unitario": float(valor_unitario),
+                            "valor_venta": float(valor_venta),
+                            "igv": float(igv),
+                            "precio_unitario": float(precio_unitario),
+                            "costo_original": float(precio_unitario_original),
+                            "descuento": float(descuento),
+                        })
+
+                    pedido.subtotal = subtotal
+                    pedido.gravado_total = gravado_total
+                    pedido.igv_total = igv_total
+                    pedido.total = total + pedido.costo_envio
+                    pedido.productos_json = productos_registrados
+
+            pedido.save()
+
+            # Preparar respuesta con productos actualizados
+            productos_finales = PedidoProducto.objects.filter(pedido=pedido)
+            productos_json = [
+                {
+                    "id": p.id,
+                    "producto": p.producto.id if p.producto else None,
+                    "producto_nombre": p.producto.nombre if p.producto else None,
+                    "cantidad": p.cantidad,
+                    "valor_unitario": float(p.valor_unitario),
+                    "precio_unitario": float(p.precio_unitario),
+                    "descuento": float(p.descuento),
+                }
+                for p in productos_finales
+            ]
+
+            return Response({
+                "mensaje": "Pedido actualizado exitosamente",
+                "pedido": {
+                    "id": pedido.id,
+                    "numero_pedido": pedido.numero_pedido,
+                    "estado": pedido.estado,
+                    "tipo_pedido": pedido.tipo_pedido,
+                    "canal_venta": pedido.canal_venta,
+                    "prioridad": pedido.prioridad,
+                    "metodo_pago": pedido.metodo_pago,
+                    "estado_pago": pedido.estado_pago,
+                    "monto_adelanto": float(pedido.monto_adelanto),
+                    "subtotal": float(pedido.subtotal),
+                    "igv_total": float(pedido.igv_total),
+                    "costo_envio": float(pedido.costo_envio),
+                    "total": float(pedido.total),
+                    "nombre_cliente": pedido.nombre_cliente,
+                    "numero_documento_cliente": pedido.numero_documento_cliente,
+                    "telefono_cliente": pedido.telefono_cliente,
+                    "direccion_envio": pedido.direccion_envio,
+                    "observaciones": pedido.observaciones,
+                    "productos": productos_json,
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": "Error interno del servidor", "detalle": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class CancelarPedidoView(APIView):
@@ -412,8 +563,11 @@ class CancelarPedidoView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            motivo = request.data.get("motivo_cancelacion", "")
+
             pedido.estado = "CANCELADO"
             pedido.fecha_cancelacion = timezone.now()
+            pedido.motivo_cancelacion = motivo
             pedido.save()
 
             return Response({
@@ -425,6 +579,150 @@ class CancelarPedidoView(APIView):
                     "fecha_cancelacion": pedido.fecha_cancelacion.isoformat(),
                     "total": float(pedido.total),
                     "nombre_cliente": pedido.nombre_cliente,
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": "Error interno del servidor", "detalle": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class DetallePedidoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pedido_id):
+        try:
+            tienda_id = request.user.tienda
+
+            try:
+                pedido = Pedido.objects.get(id=pedido_id, tienda_id=tienda_id, activo=True)
+            except Pedido.DoesNotExist:
+                return Response(
+                    {"error": "Pedido no encontrado"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            productos = PedidoProducto.objects.filter(pedido=pedido)
+            productos_json = [
+                {
+                    "id": p.id,
+                    "producto": p.producto.id if p.producto else None,
+                    "producto_nombre": p.producto.nombre if p.producto else None,
+                    "cantidad": p.cantidad,
+                    "stock_disponible": p.stock_disponible,
+                    "valor_unitario": float(p.valor_unitario),
+                    "valor_venta": float(p.valor_venta),
+                    "igv": float(p.igv),
+                    "precio_unitario": float(p.precio_unitario),
+                    "costo_original": float(p.costo_original),
+                    "descuento": float(p.descuento),
+                }
+                for p in productos
+            ]
+
+            return Response({
+                "id": pedido.id,
+                "numero_pedido": pedido.numero_pedido,
+                "usuario": pedido.usuario.id if pedido.usuario else None,
+                "tienda": pedido.tienda.id if pedido.tienda else None,
+                "tipo_pedido": pedido.tipo_pedido,
+                "canal_venta": pedido.canal_venta,
+                "prioridad": pedido.prioridad,
+                "fecha_hora": pedido.fecha_hora.isoformat(),
+                "fecha_realizacion": pedido.fecha_realizacion.isoformat() if pedido.fecha_realizacion else None,
+                "fecha_vencimiento": pedido.fecha_vencimiento.isoformat() if pedido.fecha_vencimiento else None,
+                "fecha_entrega_estimada": pedido.fecha_entrega_estimada.isoformat() if pedido.fecha_entrega_estimada else None,
+                "fecha_cancelacion": pedido.fecha_cancelacion.isoformat() if pedido.fecha_cancelacion else None,
+                "metodo_pago": pedido.metodo_pago,
+                "estado": pedido.estado,
+                "estado_pago": pedido.estado_pago,
+                "activo": pedido.activo,
+                "subtotal": float(pedido.subtotal),
+                "gravado_total": float(pedido.gravado_total),
+                "igv_total": float(pedido.igv_total),
+                "descuento_total": float(pedido.descuento_total),
+                "costo_envio": float(pedido.costo_envio),
+                "total": float(pedido.total),
+                "monto_adelanto": float(pedido.monto_adelanto),
+                "metodo_pago_adelanto": pedido.metodo_pago_adelanto,
+                "nombre_cliente": pedido.nombre_cliente,
+                "numero_documento_cliente": pedido.numero_documento_cliente,
+                "email_cliente": pedido.email_cliente,
+                "telefono_cliente": pedido.telefono_cliente,
+                "direccion_envio": pedido.direccion_envio,
+                "referencia_ubicacion": pedido.referencia_ubicacion,
+                "observaciones": pedido.observaciones,
+                "notas_internas": pedido.notas_internas,
+                "motivo_cancelacion": pedido.motivo_cancelacion,
+                "referencia_externa": pedido.referencia_externa,
+                "productos": productos_json,
+                "productos_json": pedido.productos_json,
+                "date_created": pedido.date_created.isoformat() if pedido.date_created else None,
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": "Error interno del servidor", "detalle": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ConfirmarEstadoPedidoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    ESTADOS_VALIDOS = ['COTIZADO', 'PENDIENTE', 'CONFIRMADO', 'EN_PREPARACION', 'LISTO', 'ENTREGADO']
+
+    def put(self, request, pedido_id):
+        try:
+            tienda_id = request.user.tienda
+
+            try:
+                pedido = Pedido.objects.get(id=pedido_id, tienda_id=tienda_id, activo=True)
+            except Pedido.DoesNotExist:
+                return Response(
+                    {"error": "Pedido no encontrado"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            nuevo_estado = request.data.get('estado')
+
+            if not nuevo_estado:
+                return Response(
+                    {"error": "El campo 'estado' es obligatorio"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if nuevo_estado not in self.ESTADOS_VALIDOS:
+                return Response(
+                    {"error": f"Estado no válido. Estados permitidos: {', '.join(self.ESTADOS_VALIDOS)}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if pedido.estado == 'CANCELADO':
+                return Response(
+                    {"error": "No se puede cambiar el estado de un pedido cancelado"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if pedido.estado == 'ENTREGADO':
+                return Response(
+                    {"error": "No se puede cambiar el estado de un pedido ya entregado"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            pedido.estado = nuevo_estado
+            pedido.save()
+
+            return Response({
+                "mensaje": f"Estado del pedido actualizado a {nuevo_estado}",
+                "pedido": {
+                    "id": pedido.id,
+                    "numero_pedido": pedido.numero_pedido,
+                    "estado": pedido.estado,
+                    "nombre_cliente": pedido.nombre_cliente,
+                    "total": float(pedido.total),
                 }
             }, status=status.HTTP_200_OK)
 
