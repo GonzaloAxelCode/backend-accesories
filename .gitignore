@@ -1,14 +1,3 @@
-/statics
-/env
-./statics
-./env
-.env
-/core/.env
-./core/.env
-.env
-media/
-media
-
 # Python
 __pycache__/
 *.py[cod]
@@ -19,8 +8,19 @@ venv/
 .venv/
 env/
 
-# Environment
+# Static files
+staticfiles/
+**/statics/
+statics/
+
+# Media
+media/
+**/media/
+
+# Environment variables
 .env
+**/.env
+core/.env
 
 # Django
 *.sqlite3
@@ -31,4 +31,3 @@ env/
 
 # OS
 .DS_Store
-staticfiles/
