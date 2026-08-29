@@ -31,3 +31,4 @@ env/
 
 # OS
 .DS_Store
+staticfiles/
