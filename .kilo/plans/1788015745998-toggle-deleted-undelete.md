@@ -1,34 +1,38 @@
-# Plan: Toggle deleted view also un-deletes (flip boolean only)
+# Plan: Superuser vea tiendas eliminadas en GetAllTiendas
 
 ## Context
-`ToggleUserDeletedAPIView` (`apps/user/views.py:515`) already flips `is_deleted` and
-`is_active`. Según confirmación del usuario, al deseliminar **solo se invierte el booleano**;
-no se restauran username/first_name (quedan como `is_deleted_{id}`). No se requieren
-cambios de schema.
+En `GetAllTiendas` (`apps/tienda/views.py:20`), la rama de superuser usa
+`Tienda.objects.filter(is_deleted=False)` (`apps/tienda/views.py:27`), por lo que **excluye**
+las tiendas con `is_deleted=True`. El usuario confirmó que en local y producción usa la misma
+cuenta superuser (`id=1`, `is_superuser=true`), y que en producción hay tiendas eliminadas que
+no aparecen, mientras local no tiene eliminadas (por eso "trae todas" en local y no en prod).
+Decisión: el superuser debe ver el panorama completo, incluidas las `is_deleted=True`, coherente
+con *"la agrupación de tiendas es solo para superusuario"*.
 
-## Decisiones
-- Un-delete = `is_deleted = False` + `is_active = True`. Mantener username renombrado.
-- Sin campos backup, sin migración.
+## Decisión
+- **Superuser:** devolver TODAS las tiendas, sin filtrar por `is_deleted`.
+- **admin_tienda:** mantener el comportamiento actual (solo `is_deleted=False`: su tienda +
+  sucursales + donde es propietario).
 
 ## Tareas
-1. Verificar que `ToggleUserDeletedAPIView` ya cubre ambos sentidos:
-   - `value` explícito: `PATCH /usuarios/toggle-deleted/<id>/` con `{"is_deleted": false}`.
-   - Sin `value`: invierte el estado actual (`not user.is_deleted`).
-   Ya implementado en `apps/user/views.py:534-546`. No requiere edición.
-2. Confirmar que un usuario `is_deleted=True` puede ser recuperado para deseliminarlo:
-   - El listado `GetAllUsersAPIView` excluye `is_deleted` para admin_tienda, pero el
-     **superuser** los ve (filtro sin `is_deleted=False`). Por tanto el superuser puede
-     localizar el id y llamar al toggle para deseliminar.
-   - Si se desea que admin_tienda también pueda deseliminar, habría que exponer los
-     `is_deleted` en su listado (fuera de alcance según pedido previo: admin solo ve
-     activos/desactivados, no eliminados). Dejar igual.
-3. Ejecutar `python manage.py check` para validar que no hay errores de import/sintaxis.
+1. En `apps/tienda/views.py`, método `GetAllTiendas.get`:
+   - Cambiar la línea 27:
+     `tiendas = Tienda.objects.filter(is_deleted=False)`
+     por:
+     `tiendas = Tienda.objects.all()`
+   - La rama de admin_tienda (líneas 28-40) queda igual (mantiene `is_deleted=False`).
+2. El `TiendaSerializer` ya incluye `is_deleted` (campo del modelo, `fields='__all__`), así el
+   frontend puede distinguir tiendas activas de eliminadas. No requiere cambios de serializer.
+3. No se requiere migración (solo lógica de consulta).
 
 ## Validación
-- `PATCH /usuarios/toggle-deleted/<id>/` con `{"is_deleted": true}` → `is_deleted=true`, `is_active=false`, username=`is_deleted_{id}`.
-- Mismo endpoint con `{"is_deleted": false}` → `is_deleted=false`, `is_active=true` (username se conserva).
 - `python manage.py check` sin errores.
+- Con superuser: `GET /api/tiendas/` devuelve tiendas con `is_deleted=true` y `false`.
+- Con admin_tienda: `GET /api/tiendas/` sigue devolviendo solo su tienda + sucursales
+  (`is_deleted=False`).
+- Confirmar en producción que ahora aparecen las tiendas previamente ocultas por `is_deleted`.
 
 ## Riesgos
-- Username queda como `is_deleted_{id}` tras deseliminar (aceptado por el usuario).
-- Solo superuser puede reencontrar usuarios ya eliminados para deseliminarlos.
+- El listado de superuser crecerá con tiendas eliminadas; el frontend debe manejarlas (p. ej.
+  atenuarlas o filtrarlas en UI). El campo `is_deleted` ya viaja en la respuesta.
+- No afecta a `GetTienda`, `GetMiTiendaView` ni a la creación/edición.

@@ -24,7 +24,7 @@ class GetAllTiendas(APIView):
     def get(self, request):
         user = request.user
         if user.is_superuser:
-            tiendas = Tienda.objects.filter(is_deleted=False)
+            tiendas = Tienda.objects.all()
         else:
             # Solo admin_tienda puede listar: verificar que sea propietario
             is_admin = user.tienda and user.tienda.propietario_id == user.id  # type: ignore
