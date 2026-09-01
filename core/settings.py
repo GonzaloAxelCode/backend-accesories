@@ -3,6 +3,19 @@ from pathlib import Path
 import environ # type: ignore
 
 import os
+import socket
+
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+LOCAL_IP = get_local_ip()
 
 env = environ.Env()
 environ.Env.read_env()
@@ -26,6 +39,7 @@ ALLOWED_HOSTS = ["*"]
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:4200',
     'http://127.0.0.1:4200',
+    f'http://{LOCAL_IP}:4200',
     'https://inventario-electronic-w7mn.vercel.app',
     'https://inventarioaxel.duckdns.org',
 ]
@@ -46,7 +60,8 @@ CORS_ALLOW_HEADERS = [
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:4200',
     'http://127.0.0.1:4200',
-    'https://inventario-electronic-w7mn.vercel.app',  # ← Tu frontend en Vercel
+    f'http://{LOCAL_IP}:4200',
+    'https://inventario-electronic-w7mn.vercel.app',
 ]
 
 
