@@ -49,18 +49,28 @@ class CrearInventario(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            # Normalizar precios: evitar guardar None que luego rompe Decimal() en ventas
+            def _to_decimal_or_zero(val):
+                if val is None or val == "":
+                    return 0.00
+                try:
+                    from decimal import Decimal
+                    return Decimal(str(val))
+                except Exception:
+                    return 0.00
+
             nuevo_inventario = Inventario.objects.create(
                 responsable=user,
                 #proveedor=proveedor,
                 descripcion=data.get("descripcion", ""),
                 producto=producto,
                 tienda=tienda,
-                cantidad=data.get("cantidad", 0),
-                stock_minimo=data.get("stock_minimo", 0),
-                stock_maximo=data.get("stock_maximo", 100),
-                costo_compra=data.get("costo_compra", 0.00),
-                costo_venta=data.get("costo_venta", 0.00),
-                costo=data.get("costo_compra", 0.00),
+                cantidad=data.get("cantidad", 0) or 0,
+                stock_minimo=data.get("stock_minimo", 0) or 0,
+                stock_maximo=data.get("stock_maximo", 100) or 100,
+                costo_compra=_to_decimal_or_zero(data.get("costo_compra", 0.00)),
+                costo_venta=_to_decimal_or_zero(data.get("costo_venta", 0.00)),
+                costo=_to_decimal_or_zero(data.get("costo_compra", 0.00)),
                 estado=data.get("estado", "Disponible"),
             )
 
@@ -194,9 +204,27 @@ class ActualizarInventarioView(APIView):
                 inventario.cantidad = nuevo_stock
 
             if nuevo_costo_compra is not None:
-                inventario.costo_compra = nuevo_costo_compra
+                if nuevo_costo_compra == "":
+                    inventario.costo_compra = 0.00
+                else:
+                    try:
+                        from decimal import Decimal
+                        inventario.costo_compra = Decimal(str(nuevo_costo_compra))
+                    except Exception:
+                        return Response({"error": "costo_compra inválido"}, status=status.HTTP_400_BAD_REQUEST)
             if nuevo_costo_venta is not None:
-                inventario.costo_venta = nuevo_costo_venta
+                if nuevo_costo_venta == "":
+                    inventario.costo_venta = 0.00
+                else:
+                    try:
+                        from decimal import Decimal
+                        # permitir 0 pero no None; si viene None explícito lo convertimos a 0
+                        if nuevo_costo_venta is None:
+                            inventario.costo_venta = 0.00
+                        else:
+                            inventario.costo_venta = Decimal(str(nuevo_costo_venta))
+                    except Exception:
+                        return Response({"error": "costo_venta inválido"}, status=status.HTTP_400_BAD_REQUEST)
 
             inventario.save()
             return Response(InventarioSerializer(inventario).data, status=status.HTTP_200_OK)

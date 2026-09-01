@@ -101,6 +101,7 @@ class Pedido(models.Model):
 
     # JSON de productos
     productos_json = models.JSONField(default=list, blank=True)
+    productos_pedido_json = models.TextField(default="", blank=True)
 
     date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 

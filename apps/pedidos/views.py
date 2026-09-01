@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from math import ceil
 from zoneinfo import ZoneInfo
@@ -103,8 +103,24 @@ class CrearPedidoView(APIView):
 
                 for item in data["productos"]:
                     inventario_id = item["inventarioId"]
-                    cantidad = int(item["cantidad_final"])
-                    descuento = Decimal(str(item.get("descuento", 0)))
+                    # cantidad y descuento defensivos (evita TypeError/Decimal(None))
+                    raw_cant = item.get("cantidad_final")
+                    if raw_cant is None or raw_cant == "":
+                        return Response({"error": "cantidad_final es obligatoria"}, status=status.HTTP_400_BAD_REQUEST)
+                    try:
+                        cantidad = int(raw_cant)
+                    except (ValueError, TypeError):
+                        return Response({"error": f"cantidad_final inválida: {raw_cant}"}, status=status.HTTP_400_BAD_REQUEST)
+                    if cantidad <= 0:
+                        return Response({"error": "cantidad_final debe ser > 0"}, status=status.HTTP_400_BAD_REQUEST)
+
+                    raw_desc = item.get("descuento", 0)
+                    if raw_desc is None or raw_desc == "":
+                        raw_desc = "0"
+                    try:
+                        descuento = Decimal(str(raw_desc))
+                    except (InvalidOperation, ValueError, TypeError):
+                        return Response({"error": f"descuento inválido: {raw_desc}"}, status=status.HTTP_400_BAD_REQUEST)
 
                     try:
                         inventario = Inventario.objects.get(id=inventario_id)
@@ -114,10 +130,19 @@ class CrearPedidoView(APIView):
                             status=status.HTTP_404_NOT_FOUND,
                         )
 
+                    if inventario.costo_venta is None:
+                        return Response(
+                            {"error": f"El producto '{inventario.producto.nombre}' no tiene precio de venta configurado"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    try:
+                        precio_unitario_original = Decimal(str(inventario.costo_venta))
+                    except (InvalidOperation, ValueError, TypeError) as e:
+                        return Response({"error": f"costo_venta inválido para inventario {inventario_id}: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
                     stock_ok = inventario.cantidad >= cantidad
 
-                    precio_unitario_original = Decimal(inventario.costo_venta)
-                    precio_unitario = precio_unitario_original - (descuento / cantidad)
+                    precio_unitario = precio_unitario_original - (descuento / Decimal(cantidad))
                     valor_unitario = precio_unitario / (Decimal("1.00") + Decimal("0.18"))
                     valor_venta = valor_unitario * cantidad
                     igv = valor_venta * Decimal("0.18")
@@ -144,6 +169,10 @@ class CrearPedidoView(APIView):
                     igv_total += igv
                     total += precio_unitario * cantidad
 
+                    imagen_url = None
+                    if inventario.producto and inventario.producto.imagen:
+                        imagen_url = request.build_absolute_uri(inventario.producto.imagen.url)
+
                     productos_registrados.append({
                         "producto_id": inventario.producto.id,
                         "producto_nombre": inventario.producto.nombre,
@@ -155,6 +184,7 @@ class CrearPedidoView(APIView):
                         "precio_unitario": float(precio_unitario),
                         "costo_original": float(precio_unitario_original),
                         "descuento": float(descuento),
+                        "imagen": imagen_url,
                     })
 
                 pedido.subtotal = subtotal
@@ -162,6 +192,8 @@ class CrearPedidoView(APIView):
                 pedido.igv_total = igv_total
                 pedido.total = total + costo_envio
                 pedido.productos_json = productos_registrados
+                import json
+                pedido.productos_pedido_json = json.dumps(productos_registrados)
                 pedido.save()
 
             return Response({
@@ -213,7 +245,7 @@ class ListarPedidosView(APIView):
         tienda_id = request.user.tienda
         query = request.data.get('query', {})
 
-        pedidos = Pedido.objects.filter(tienda_id=tienda_id, activo=True)
+        pedidos = Pedido.objects.filter(tienda_id=tienda_id)
 
         from_date = query.get('from_date')
         to_date = query.get('to_date')
@@ -271,12 +303,14 @@ class ListarPedidosView(APIView):
         pedidos = pedidos.order_by('-date_created')
 
         total_pedidos = pedidos.count()
-        paginator = PedidoPagination()
-        result_page = paginator.paginate_queryset(pedidos, request)
         total_pages = ceil(total_pedidos / page_size) if page_size > 0 else 0
 
         next_page = page_number + 1 if page_number < total_pages else None
         previous_page = page_number - 1 if page_number > 1 else None
+
+        start = (page_number - 1) * page_size
+        end = start + page_size
+        result_page = pedidos[start:end]
 
         pedidos_json = []
         for pedido in result_page:
@@ -297,6 +331,14 @@ class ListarPedidosView(APIView):
                 }
                 for p in productos
             ]
+
+            import json
+            productos_pedido_json_parsed = []
+            if pedido.productos_pedido_json:
+                try:
+                    productos_pedido_json_parsed = json.loads(pedido.productos_pedido_json)
+                except (json.JSONDecodeError, TypeError):
+                    productos_pedido_json_parsed = []
 
             pedidos_json.append({
                 "id": pedido.id,
@@ -335,6 +377,7 @@ class ListarPedidosView(APIView):
                 "referencia_externa": pedido.referencia_externa,
                 "productos": productos_json,
                 "productos_json": pedido.productos_json,
+                "productos_pedido_json": productos_pedido_json_parsed,
                 "date_created": pedido.date_created.isoformat() if pedido.date_created else None,
             })
 
@@ -432,9 +475,25 @@ class ActualizarPedidoView(APIView):
                     productos_registrados = []
 
                     for item in productos_data:
-                        inventario_id = item["inventarioId"]
-                        cantidad = int(item["cantidad_final"])
-                        descuento = Decimal(str(item.get("descuento", 0)))
+                        inventario_id = item.get("inventarioId")
+                        if inventario_id is None:
+                            return Response({"error": "inventarioId es obligatorio"}, status=status.HTTP_400_BAD_REQUEST)
+                        raw_cant = item.get("cantidad_final")
+                        if raw_cant is None or raw_cant == "":
+                            return Response({"error": "cantidad_final es obligatoria"}, status=status.HTTP_400_BAD_REQUEST)
+                        try:
+                            cantidad = int(raw_cant)
+                        except (ValueError, TypeError):
+                            return Response({"error": f"cantidad_final inválida: {raw_cant}"}, status=status.HTTP_400_BAD_REQUEST)
+                        if cantidad <= 0:
+                            return Response({"error": "cantidad_final debe ser > 0"}, status=status.HTTP_400_BAD_REQUEST)
+                        raw_desc = item.get("descuento", 0)
+                        if raw_desc is None or raw_desc == "":
+                            raw_desc = "0"
+                        try:
+                            descuento = Decimal(str(raw_desc))
+                        except (InvalidOperation, ValueError, TypeError):
+                            return Response({"error": f"descuento inválido: {raw_desc}"}, status=status.HTTP_400_BAD_REQUEST)
 
                         try:
                             inventario = Inventario.objects.get(id=inventario_id)
@@ -444,10 +503,19 @@ class ActualizarPedidoView(APIView):
                                 status=status.HTTP_404_NOT_FOUND,
                             )
 
+                        if inventario.costo_venta is None:
+                            return Response(
+                                {"error": f"El producto '{inventario.producto.nombre}' no tiene precio de venta configurado"},
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+                        try:
+                            precio_unitario_original = Decimal(str(inventario.costo_venta))
+                        except (InvalidOperation, ValueError, TypeError) as e:
+                            return Response({"error": f"costo_venta inválido para inventario {inventario_id}: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
                         stock_ok = inventario.cantidad >= cantidad
 
-                        precio_unitario_original = Decimal(inventario.costo_venta)
-                        precio_unitario = precio_unitario_original - (descuento / cantidad)
+                        precio_unitario = precio_unitario_original - (descuento / Decimal(cantidad))
                         valor_unitario = precio_unitario / (Decimal("1.00") + Decimal("0.18"))
                         valor_venta = valor_unitario * cantidad
                         igv = valor_venta * Decimal("0.18")
@@ -474,6 +542,10 @@ class ActualizarPedidoView(APIView):
                         igv_total += igv
                         total += precio_unitario * cantidad
 
+                        imagen_url = None
+                        if inventario.producto and inventario.producto.imagen:
+                            imagen_url = request.build_absolute_uri(inventario.producto.imagen.url)
+
                         productos_registrados.append({
                             "producto_id": inventario.producto.id,
                             "producto_nombre": inventario.producto.nombre,
@@ -485,6 +557,7 @@ class ActualizarPedidoView(APIView):
                             "precio_unitario": float(precio_unitario),
                             "costo_original": float(precio_unitario_original),
                             "descuento": float(descuento),
+                            "imagen": imagen_url,
                         })
 
                     pedido.subtotal = subtotal
@@ -492,6 +565,8 @@ class ActualizarPedidoView(APIView):
                     pedido.igv_total = igv_total
                     pedido.total = total + pedido.costo_envio
                     pedido.productos_json = productos_registrados
+                    import json
+                    pedido.productos_pedido_json = json.dumps(productos_registrados)
 
             pedido.save()
 
@@ -622,6 +697,14 @@ class DetallePedidoView(APIView):
                 for p in productos
             ]
 
+            import json
+            productos_pedido_json_parsed = []
+            if pedido.productos_pedido_json:
+                try:
+                    productos_pedido_json_parsed = json.loads(pedido.productos_pedido_json)
+                except (json.JSONDecodeError, TypeError):
+                    productos_pedido_json_parsed = []
+
             return Response({
                 "id": pedido.id,
                 "numero_pedido": pedido.numero_pedido,
@@ -659,6 +742,7 @@ class DetallePedidoView(APIView):
                 "referencia_externa": pedido.referencia_externa,
                 "productos": productos_json,
                 "productos_json": pedido.productos_json,
+                "productos_pedido_json": productos_pedido_json_parsed,
                 "date_created": pedido.date_created.isoformat() if pedido.date_created else None,
             }, status=status.HTTP_200_OK)
 
@@ -724,6 +808,37 @@ class ConfirmarEstadoPedidoView(APIView):
                     "nombre_cliente": pedido.nombre_cliente,
                     "total": float(pedido.total),
                 }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": "Error interno del servidor", "detalle": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class EliminarPedidoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pedido_id):
+        try:
+            tienda_id = request.user.tienda
+
+            try:
+                pedido = Pedido.objects.get(id=pedido_id, tienda_id=tienda_id)
+            except Pedido.DoesNotExist:
+                return Response(
+                    {"error": "Pedido no encontrado"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            numero_pedido = pedido.numero_pedido
+            pedido.delete()
+
+            return Response({
+                "mensaje": "Pedido eliminado permanentemente.",
+                "pedido_id": pedido_id,
+                "numero_pedido": numero_pedido
             }, status=status.HTTP_200_OK)
 
         except Exception as e:

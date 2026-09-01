@@ -1,5 +1,5 @@
 from django.urls import path
-from apps.reports.views import DailySummaryReportView, MonthlyReportView, PaymentMethodsByDateRangeView, TopProductsReportView, TopCategoriesReportView, DailyPaymentMethodsReportView, DailyPeakHoursReportView, DailyTopProductsReportView, DailyTopCategoriesReportView, DailyRecentSalesReportView, DailyCustomersReportView, MonthlyCustomersReportView
+from apps.reports.views import DailySummaryReportView, MonthlyReportView, PaymentMethodsByDateRangeView, TopProductsReportView, TopCategoriesReportView, DailyPaymentMethodsReportView, DailyPeakHoursReportView, DailyTopProductsReportView, DailyTopCategoriesReportView, DailyRecentSalesReportView, DailyCustomersReportView, MonthlyCustomersReportView, DailyCancelledSalesReportView, CancelledSalesByDateRangeView, ClientsSalesHistoryReportView
 
 urlpatterns = [
     path("reports/daily-summary/", DailySummaryReportView.as_view(), name="daily-summary-report"),
@@ -14,4 +14,7 @@ urlpatterns = [
     path("reports/payment-methods/", PaymentMethodsByDateRangeView.as_view(), name="payment-methods-report"),
     path("reports/top-products/", TopProductsReportView.as_view(), name="top-products-report"),
     path("reports/top-categories/", TopCategoriesReportView.as_view(), name="top-categories-report"),
+    path("reports/daily-cancelled-sales/", DailyCancelledSalesReportView.as_view(), name="daily-cancelled-sales-report"),
+    path("reports/cancelled-sales-range/", CancelledSalesByDateRangeView.as_view(), name="cancelled-sales-range-report"),
+    path("reports/clients-sales-history/", ClientsSalesHistoryReportView.as_view(), name="clients-sales-history-report"),
 ]

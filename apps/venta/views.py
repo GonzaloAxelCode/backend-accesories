@@ -201,8 +201,9 @@ class CreateSaleView(APIView):
 class SalesSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, *args, **kwargs):
-        tienda_id = request.user.tienda
+    def _get_summary(self, tienda_id):
+        """Calcula día/semana/mes usando productos_json (precio_unitario ya con descuento)."""
+        from apps.venta.utils import calcular_total_venta
 
         today = localtime(now()).date()
         start_of_week = today - timedelta(days=today.weekday())
@@ -212,41 +213,49 @@ class SalesSummaryView(APIView):
         ventas_activas = Venta.objects.filter(
             tienda_id=tienda_id,
             activo=True,
-            total__gt=0,
-            comprobante__estado_sunat__in=["ACEPTADO", "aceptado"],
+            estado__in=["ACEPTADO", "aceptado", "Aceptado"],
+            comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
         )
 
-        today_sales = (
-            ventas_activas
-            .filter(fecha_hora__date=today)
-            .aggregate(total=Sum("total"))["total"] or 0
+        def _sum_productos_json(qs):
+            total = 0.0
+            for v in qs.only("productos_json", "total"):
+                total += calcular_total_venta(v)  # productos_json: sum(precio_unitario * cantidad) con descuento restado
+            return round(total, 2)
+
+        today_sales = _sum_productos_json(
+            ventas_activas.filter(fecha_hora__date=today)
         )
 
-        this_week_sales = (
-            ventas_activas
-            .filter(
+        this_week_sales = _sum_productos_json(
+            ventas_activas.filter(
                 fecha_hora__date__gte=start_of_week,
                 fecha_hora__date__lte=today,
                 fecha_hora__year=current_year,
             )
-            .aggregate(total=Sum("total"))["total"] or 0
         )
 
-        this_month_sales = (
-            ventas_activas
-            .filter(
+        this_month_sales = _sum_productos_json(
+            ventas_activas.filter(
                 fecha_hora__date__gte=start_of_month,
                 fecha_hora__date__lte=today,
                 fecha_hora__year=current_year,
             )
-            .aggregate(total=Sum("total"))["total"] or 0
         )
 
-        return Response({
+        return {
             "todaySales": today_sales,
             "thisWeekSales": this_week_sales,
             "thisMonthSales": this_month_sales,
-        })
+        }
+
+    def post(self, request, *args, **kwargs):
+        tienda_id = request.user.tienda
+        return Response(self._get_summary(tienda_id))
+
+    def get(self, request, *args, **kwargs):
+        tienda_id = request.user.tienda
+        return Response(self._get_summary(tienda_id))
 
 
 class SalesByDateRangeView(APIView):
@@ -274,32 +283,96 @@ class SalesByDateRangeView(APIView):
 
         from_date_obj = from_date_obj.date()
         to_date_obj = to_date_obj.date()
+        to_date_obj_exclusive = to_date_obj + timedelta(days=1)
 
         date_range = []
         current_date = from_date_obj
-        while current_date <= to_date_obj:
+        while current_date < to_date_obj_exclusive:
             date_range.append(current_date)
             current_date += timedelta(days=1)
 
         ventas = Venta.objects.filter(
-            total__gt=0,
             tienda=tienda_id,
+            activo=True,
             fecha_hora__gte=from_date_obj,
-            fecha_hora__lte=to_date_obj,
-            comprobante__estado_sunat__in=["ACEPTADO", "ANULADO"]
+            fecha_hora__lt=to_date_obj_exclusive,
+            comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
+            estado__in=["ACEPTADO", "aceptado", "Aceptado"],
         )
 
-        daily_sales = (
-            ventas
-            .values('fecha_hora__date')
-            .annotate(total_sales=Sum('total'))
-            .order_by('fecha_hora__date')
-        )
-
-        sales_by_date = {sale['fecha_hora__date']: sale['total_sales'] or 0 for sale in daily_sales}
+        daily_sales = {}
+        for venta in ventas:
+            dia = localtime(venta.fecha_hora).date()
+            productos = venta.productos_json
+            total_venta = 0.0
+            if productos:
+                if isinstance(productos, str):
+                    try:
+                        productos = json.loads(productos)
+                    except Exception:
+                        productos = []
+                if isinstance(productos, list):
+                    for item in productos:
+                        if not isinstance(item, dict):
+                            continue
+                        cantidad = item.get("cantidad", 0)
+                        try:
+                            cantidad = int(cantidad)
+                        except (ValueError, TypeError):
+                            try:
+                                cantidad = int(float(str(cantidad)))
+                            except Exception:
+                                continue
+                        if cantidad <= 0:
+                            continue
+                        precio_raw = item.get("precio_unitario")
+                        if precio_raw is None:
+                            base = item.get("precio_venta")
+                            if base is None:
+                                base = item.get("costo_original")
+                            if base is not None:
+                                try:
+                                    base_f = float(base)
+                                except Exception:
+                                    try:
+                                        base_f = float(str(base).replace(",", "."))
+                                    except Exception:
+                                        base_f = 0.0
+                                disc_raw = item.get("descuento")
+                                try:
+                                    descuento = float(disc_raw) if disc_raw not in (None, "") else 0.0
+                                except Exception:
+                                    descuento = 0.0
+                                if descuento and cantidad:
+                                    precio_raw = base_f - (descuento / cantidad)
+                                else:
+                                    precio_raw = base_f
+                            else:
+                                vu = item.get("valor_unitario")
+                                if vu is not None:
+                                    try:
+                                        precio_raw = float(vu) * 1.18
+                                    except Exception:
+                                        precio_raw = 0
+                                elif item.get("valor_venta") is not None and cantidad:
+                                    try:
+                                        precio_raw = float(item.get("valor_venta")) / cantidad * 1.18
+                                    except Exception:
+                                        precio_raw = 0
+                                else:
+                                    precio_raw = 0
+                        try:
+                            precio = float(precio_raw)
+                        except (ValueError, TypeError):
+                            try:
+                                precio = float(str(precio_raw).replace(",", "."))
+                            except Exception:
+                                precio = 0.0
+                        total_venta += round(precio * cantidad, 2)
+            daily_sales[dia] = daily_sales.get(dia, 0.0) + total_venta
 
         sales_date_range = [
-            [f"{date.year}, {date.month - 1}, {date.day}", float(sales_by_date.get(date, 0))]
+            [f"{date.year}, {date.month - 1}, {date.day}", round(float(daily_sales.get(date, 0)), 2)]
             for date in date_range
         ]
 
@@ -310,6 +383,8 @@ class TopProductsTodayView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        from apps.venta.utils import _parse_productos_json, _get_cantidad_safe
+
         tienda = request.user.tienda
         hoy = datetime.now().date()
 
@@ -319,20 +394,26 @@ class TopProductsTodayView(APIView):
         ventas = Venta.objects.filter(
             tienda=tienda,
             activo=True,
-            total__gt=0,
+            estado__in=["ACEPTADO", "aceptado", "Aceptado"],
+            comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
             fecha_hora__range=(from_date, to_date)
-        )
-
-        venta_productos = VentaProducto.objects.filter(
-            venta__in=ventas,
-            venta__comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
-            venta__estado__in=["ACEPTADO", "aceptado"],
-        )
+        ).only("productos_json")
 
         contador = Counter()
-        for vp in venta_productos:
-            if vp.producto:
-                contador[vp.producto.nombre] += vp.cantidad
+        for venta in ventas:
+            for item in _parse_productos_json(venta.productos_json):
+                if not isinstance(item, dict):
+                    continue
+                nombre = item.get("producto_nombre") or item.get("nombre") or item.get("descripcion")
+                if not nombre:
+                    continue
+                nombre = str(nombre).strip()
+                if not nombre:
+                    continue
+                cantidad = _get_cantidad_safe(item)
+                if cantidad is None:
+                    continue
+                contador[nombre] += cantidad
 
         productos_data = [
             {"nombre": nombre, "cantidad_total_vendida": cantidad}
@@ -376,22 +457,102 @@ class TopProductsByMonthView(APIView):
             tienda=tienda,
             activo=True,
             total__gt=0,
-            fecha_hora__range=(from_date, to_date)
-        )
-
-        venta_productos = VentaProducto.objects.filter(
-            venta__in=ventas,
-            venta__comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
-            venta__estado__in=["ACEPTADO", "aceptado"],
-        )
+            fecha_hora__gte=from_date,
+            fecha_hora__lt=to_date,
+            estado__in=["ACEPTADO", "aceptado", "Aceptado"],
+            comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
+        ).only("productos_json")
 
         contador = Counter()
-        for vp in venta_productos:
-            if vp.producto:
-                contador[vp.producto.nombre] += vp.cantidad
+        totales = {}
+        for venta in ventas:
+            productos = venta.productos_json
+            if not productos:
+                continue
+            if isinstance(productos, str):
+                try:
+                    productos = json.loads(productos)
+                except Exception:
+                    continue
+            if not isinstance(productos, list):
+                continue
+            for item in productos:
+                if not isinstance(item, dict):
+                    continue
+                nombre = item.get("producto_nombre") or item.get("nombre") or item.get("descripcion")
+                if not nombre:
+                    continue
+                nombre = str(nombre).strip()
+                if not nombre:
+                    continue
+                cant_raw = item.get("cantidad", 0)
+                try:
+                    cantidad = int(cant_raw)
+                except (ValueError, TypeError):
+                    try:
+                        cantidad = int(float(str(cant_raw)))
+                    except Exception:
+                        continue
+                if cantidad <= 0:
+                    continue
+                contador[nombre] += cantidad
+
+                precio_raw = item.get("precio_unitario")
+                if precio_raw is None:
+                    base = item.get("precio_venta")
+                    if base is None:
+                        base = item.get("costo_original")
+                    if base is not None:
+                        try:
+                            base_f = float(base)
+                        except Exception:
+                            try:
+                                base_f = float(str(base).replace(",", "."))
+                            except Exception:
+                                base_f = 0.0
+                        disc_raw = item.get("descuento")
+                        try:
+                            descuento = float(disc_raw) if disc_raw not in (None, "") else 0.0
+                        except Exception:
+                            descuento = 0.0
+                        if descuento and cantidad:
+                            precio_raw = base_f - (descuento / cantidad)
+                        else:
+                            precio_raw = base_f
+                    else:
+                        vu = item.get("valor_unitario")
+                        if vu is not None:
+                            try:
+                                precio_raw = float(vu) * 1.18
+                            except Exception:
+                                precio_raw = 0
+                        elif item.get("valor_venta") is not None and cantidad:
+                            try:
+                                precio_raw = float(item.get("valor_venta")) / cantidad * 1.18
+                            except Exception:
+                                precio_raw = 0
+                        else:
+                            precio_raw = 0
+
+                try:
+                    precio = float(precio_raw)
+                except (ValueError, TypeError):
+                    try:
+                        precio = float(str(precio_raw).replace(",", "."))
+                    except Exception:
+                        precio = 0.0
+
+                total_linea = round(precio * cantidad, 2)
+                totales[nombre] = totales.get(nombre, 0.0) + total_linea
 
         productos_data = [
-            {"nombre": nombre, "cantidad_total_vendida": cantidad}
+            {
+                "nombre": nombre,
+                "cantidad_total_vendida": cantidad,
+                "unidades_vendidas": cantidad,
+                "total_vendido": round(totales.get(nombre, 0.0), 2),
+                "monto_total_vendido": round(totales.get(nombre, 0.0), 2),
+            }
             for nombre, cantidad in contador.items()
         ]
 
@@ -412,6 +573,7 @@ class SalesByDayMonthView(APIView):
         year = int(request.data.get("year", 0))
         month = int(request.data.get("month", 0))
         day = int(request.data.get("day", 0))
+        week = int(request.data.get("week", 0))
         tipo = request.data.get("tipo", "default")
 
         if not tienda_id:
@@ -420,20 +582,103 @@ class SalesByDayMonthView(APIView):
         ventas_activas = Venta.objects.filter(
             tienda_id=tienda_id,
             activo=True,
-            total__gt=0,
-            comprobante__estado_sunat__in=["ACEPTADO", "aceptado"],
-            estado__in=["ACEPTADO", "aceptado"],
+            comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
+            estado__in=["ACEPTADO", "aceptado", "Aceptado"],
         )
 
         today_sales = None
         this_month_sales = None
+        this_week_sales = None
+        sales_count = None
+
+        def _calcular_total_productos_json(ventas):
+            total = 0.0
+            for venta in ventas:
+                productos = venta.productos_json
+                if not productos:
+                    continue
+                if isinstance(productos, str):
+                    try:
+                        productos = json.loads(productos)
+                    except Exception:
+                        continue
+                if not isinstance(productos, list):
+                    continue
+                for item in productos:
+                    if not isinstance(item, dict):
+                        continue
+                    cantidad = item.get("cantidad", 0)
+                    try:
+                        cantidad = int(cantidad)
+                    except (ValueError, TypeError):
+                        try:
+                            cantidad = int(float(str(cantidad)))
+                        except Exception:
+                            continue
+                    if cantidad <= 0:
+                        continue
+
+                    precio_raw = item.get("precio_unitario")
+                    if precio_raw is None:
+                        base = item.get("precio_venta")
+                        if base is None:
+                            base = item.get("costo_original")
+                        if base is not None:
+                            try:
+                                base_f = float(base)
+                            except Exception:
+                                try:
+                                    base_f = float(str(base).replace(",", "."))
+                                except Exception:
+                                    base_f = 0.0
+                            disc_raw = item.get("descuento")
+                            try:
+                                descuento = float(disc_raw) if disc_raw not in (None, "") else 0.0
+                            except Exception:
+                                descuento = 0.0
+                            if descuento and cantidad:
+                                precio_raw = base_f - (descuento / cantidad)
+                            else:
+                                precio_raw = base_f
+                        else:
+                            vu = item.get("valor_unitario")
+                            if vu is not None:
+                                try:
+                                    precio_raw = float(vu) * 1.18
+                                except Exception:
+                                    precio_raw = 0
+                            elif item.get("valor_venta") is not None and cantidad:
+                                try:
+                                    precio_raw = float(item.get("valor_venta")) / cantidad * 1.18
+                                except Exception:
+                                    precio_raw = 0
+                            else:
+                                precio_raw = 0
+
+                    try:
+                        precio = float(precio_raw)
+                    except (ValueError, TypeError):
+                        try:
+                            precio = float(str(precio_raw).replace(",", "."))
+                        except Exception:
+                            precio = 0.0
+
+                    total += round(precio * cantidad, 2)
+
+            return round(total, 2)
 
         try:
-            if tipo == "day_month_year":
+            if tipo == "day_month_year" and year and month and day:
                 selected_date = date(year, month, day)
-                today_sales = ventas_activas.filter(
-                    fecha_hora__date=selected_date
-                ).aggregate(total=Sum("total"))['total'] or 0
+                tz = timezone.get_current_timezone()
+                start_of_day = make_aware(datetime.combine(selected_date, time.min), timezone=tz)
+                end_of_day = start_of_day + timedelta(days=1)
+                ventas = ventas_activas.filter(
+                    fecha_hora__gte=start_of_day,
+                    fecha_hora__lt=end_of_day
+                )
+                sales_count = ventas.count()
+                today_sales = _calcular_total_productos_json(ventas)
 
             elif tipo == "month_year" and year and month:
                 start_of_month = date(year, month, 1)
@@ -442,15 +687,39 @@ class SalesByDayMonthView(APIView):
                 else:
                     end_of_month = date(year, month + 1, 1)
 
-                this_month_sales = ventas_activas.filter(
-                    fecha_hora__date__gte=start_of_month,
-                    fecha_hora__date__lt=end_of_month
-                ).aggregate(total=Sum("total"))['total'] or 0
+                tz = timezone.get_current_timezone()
+                start_dt = make_aware(datetime.combine(start_of_month, time.min), timezone=tz)
+                end_dt = make_aware(datetime.combine(end_of_month, time.min), timezone=tz)
+
+                ventas = ventas_activas.filter(
+                    fecha_hora__gte=start_dt,
+                    fecha_hora__lt=end_dt
+                )
+                sales_count = ventas.count()
+                this_month_sales = _calcular_total_productos_json(ventas)
+
+            elif tipo == "week_year" and year and week:
+                jan4 = date(year, 1, 4)
+                start_of_week = jan4 - timedelta(days=jan4.weekday()) + timedelta(weeks=week - 1)
+                end_of_week = start_of_week + timedelta(days=7)
+
+                tz = timezone.get_current_timezone()
+                start_dt = make_aware(datetime.combine(start_of_week, time.min), timezone=tz)
+                end_dt = make_aware(datetime.combine(end_of_week, time.min), timezone=tz)
+
+                ventas = ventas_activas.filter(
+                    fecha_hora__gte=start_dt,
+                    fecha_hora__lt=end_dt
+                )
+                sales_count = ventas.count()
+                this_week_sales = _calcular_total_productos_json(ventas)
 
             else:
                 return Response({
                     "todaySales": None,
                     "thisMonthSales": None,
+                    "thisWeekSales": None,
+                    "salesCount": None,
                     "tipo": "default"
                 })
 
@@ -460,6 +729,8 @@ class SalesByDayMonthView(APIView):
         return Response({
             "todaySales": today_sales,
             "thisMonthSales": this_month_sales,
+            "thisWeekSales": this_week_sales,
+            "salesCount": sales_count,
             "tipo": tipo
         })
 
@@ -478,19 +749,21 @@ class SalesDailyTrendView(APIView):
 
         desde = hoy - timedelta(days=days - 1)
 
+        from apps.venta.utils import calcular_total_venta
+
         ventas = Venta.objects.filter(
             tienda_id=tienda_id,
             activo=True,
-            total__gt=0,
+            estado__in=["ACEPTADO", "aceptado", "Aceptado"],
             comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
             fecha_hora__date__gte=desde,
             fecha_hora__date__lte=hoy,
-        )
+        ).only("productos_json", "total", "fecha_hora")
 
         por_dia = {}
         for v in ventas:
-            dia = v.fecha_hora.date().isoformat()
-            por_dia[dia] = por_dia.get(dia, 0) + float(v.total)
+            dia = localtime(v.fecha_hora).date().isoformat()
+            por_dia[dia] = por_dia.get(dia, 0) + calcular_total_venta(v)
 
         resultados = []
         current = desde
@@ -564,7 +837,6 @@ class SearchSalesView(APIView):
         for venta in result_page:  # type: ignore[reportOptionalIterable]
             comprobante_venta = ComprobanteElectronico.objects.filter(venta=venta).first()
             comprobante_json = None
-            productos = VentaProducto.objects.filter(venta=venta)
 
             if comprobante_venta:
                 comprobante_json = {
@@ -589,23 +861,60 @@ class SearchSalesView(APIView):
                     "items": comprobante_venta.items,
                 }
 
-            productos_json = [
-                {
-                    "id": producto.id,
-                    "producto": producto.producto.id if producto.producto else None,
-                    "producto_nombre": producto.producto.nombre,
-                    "cantidad": producto.cantidad,
-                    "valor_unitario": float(producto.valor_unitario),
-                    "valor_venta": float(producto.valor_venta),
-                    "base_igv": float(producto.base_igv),
-                    "porcentaje_igv": float(producto.porcentaje_igv),
-                    "igv": float(producto.igv),
-                    "tipo_afectacion_igv": producto.tipo_afectacion_igv,
-                    "total_impuestos": float(producto.total_impuestos),
-                    "precio_unitario": float(producto.precio_unitario),
-                }
-                for producto in productos
-            ]
+            # Lectura desde productos_json (ya no VentaProducto) - mantiene compatibilidad de keys
+            from apps.venta.utils import _parse_productos_json, VentaService
+
+            raw_productos = _parse_productos_json(venta.productos_json)
+            # Enriquecer con is_deleted/is_updated e imagen si falta
+            try:
+                raw_productos = VentaService.enrich_productos_json(raw_productos, request, None, venta)
+            except Exception:
+                pass
+            productos_json = []
+            for idx, item in enumerate(raw_productos):
+                if not isinstance(item, dict):
+                    continue
+                # Mapear a formato esperado por frontend (compat con VentaProducto)
+                try:
+                    cantidad = int(item.get("cantidad", 0) or 0)
+                except Exception:
+                    try:
+                        cantidad = int(float(str(item.get("cantidad", 0))))
+                    except Exception:
+                        cantidad = 0
+                # valores con fallback para compatibilidad
+                def _f(v, d=0.0):
+                    if v is None or v == "":
+                        return d
+                    try:
+                        return float(v)
+                    except Exception:
+                        try:
+                            return float(str(v).replace(",", "."))
+                        except Exception:
+                            return d
+                productos_json.append({
+                    "id": item.get("producto_id") or idx,
+                    "producto": item.get("producto_id"),
+                    "producto_nombre": item.get("producto_nombre") or item.get("nombre") or item.get("descripcion"),
+                    "cantidad": cantidad,
+                    "valor_unitario": _f(item.get("valor_unitario")),
+                    "valor_venta": _f(item.get("valor_venta")),
+                    "base_igv": _f(item.get("base_igv", item.get("valor_venta"))),
+                    "porcentaje_igv": _f(item.get("porcentaje_igv", 18.0)),
+                    "igv": _f(item.get("igv")),
+                    "tipo_afectacion_igv": item.get("tipo_afectacion_igv", "10"),
+                    "total_impuestos": _f(item.get("total_impuestos", item.get("igv"))),
+                    "precio_unitario": _f(item.get("precio_unitario", item.get("costo_original"))),
+                    "descuento": _f(item.get("descuento")),
+                    "costo_original": _f(item.get("costo_original", item.get("precio_venta"))),
+                    "producto_imagen": item.get("producto_imagen") or item.get("img_url") or item.get("imagen"),
+                    "sku": item.get("sku"),
+                    "categoria_id": item.get("categoria_id"),
+                    "categoria_nombre": item.get("categoria_nombre"),
+                    "is_deleted": item.get("is_deleted", False),
+                    "is_updated": item.get("is_updated", False),
+                })
 
             nota_credito = getattr(venta, "nota_credito", None)
             nota_credito_json = None
@@ -628,6 +937,8 @@ class SearchSalesView(APIView):
                     "fecha_emision": nota_credito.fecha_emision.isoformat(),
                 }
 
+            from apps.venta.utils import calcular_total_venta
+
             ventas_json.append({
                 "id": venta.id,
                 "usuario": venta.usuario.id if venta.usuario else None,
@@ -640,7 +951,7 @@ class SearchSalesView(APIView):
                 "activo": venta.activo,
                 "tipo_comprobante": venta.tipo_comprobante,
                 "productos": productos_json,
-                "total": venta.total,
+                "total": calcular_total_venta(venta),
                 "productos_json": json.dumps(venta.productos_json, indent=4),
                 "comprobante": comprobante_json,
                 "comprobante_nota_credito": nota_credito_json,
@@ -696,7 +1007,6 @@ class SalesTotalsView(APIView):
             for venta in paginated_ventas:  # type: ignore[reportOptionalIterable]
                 comprobante_venta = ComprobanteElectronico.objects.filter(venta=venta).first()
                 comprobante_json = None
-                productos = VentaProducto.objects.filter(venta=venta)
 
                 if comprobante_venta:
                     comprobante_json = {
@@ -721,24 +1031,53 @@ class SalesTotalsView(APIView):
                         "items": comprobante_venta.items,
                     }
 
-                productos_json = [
-                    {
-                        "id": producto.id,
-                        "producto": producto.producto.id if producto.producto else None,
-                        "producto_imagen": producto.producto.imagen.url if producto.producto and producto.producto.imagen else None,
-                        "producto_nombre": producto.producto.nombre,
-                        "cantidad": producto.cantidad,
-                        "valor_unitario": float(producto.valor_unitario),
-                        "valor_venta": float(producto.valor_venta),
-                        "base_igv": float(producto.base_igv),
-                        "porcentaje_igv": float(producto.porcentaje_igv),
-                        "igv": float(producto.igv),
-                        "tipo_afectacion_igv": producto.tipo_afectacion_igv,
-                        "total_impuestos": float(producto.total_impuestos),
-                        "precio_unitario": float(producto.precio_unitario),
-                    }
-                    for producto in productos
-                ]
+                from apps.venta.utils import _parse_productos_json, VentaService
+                raw_productos = _parse_productos_json(venta.productos_json)
+                try:
+                    raw_productos = VentaService.enrich_productos_json(raw_productos, request, None, venta)
+                except Exception:
+                    pass
+                productos_json = []
+                for idx, item in enumerate(raw_productos):
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        cantidad = int(item.get("cantidad", 0) or 0)
+                    except Exception:
+                        try:
+                            cantidad = int(float(str(item.get("cantidad", 0))))
+                        except Exception:
+                            cantidad = 0
+                    def _f(v, d=0.0):
+                        if v is None or v == "":
+                            return d
+                        try:
+                            return float(v)
+                        except Exception:
+                            try:
+                                return float(str(v).replace(",", "."))
+                            except Exception:
+                                return d
+                    productos_json.append({
+                        "id": item.get("producto_id") or idx,
+                        "producto": item.get("producto_id"),
+                        "producto_imagen": item.get("producto_imagen") or item.get("img_url") or item.get("imagen"),
+                        "producto_nombre": item.get("producto_nombre") or item.get("nombre") or item.get("descripcion"),
+                        "cantidad": cantidad,
+                        "valor_unitario": _f(item.get("valor_unitario")),
+                        "valor_venta": _f(item.get("valor_venta")),
+                        "base_igv": _f(item.get("base_igv", item.get("valor_venta"))),
+                        "porcentaje_igv": _f(item.get("porcentaje_igv", 18.0)),
+                        "igv": _f(item.get("igv")),
+                        "tipo_afectacion_igv": item.get("tipo_afectacion_igv", "10"),
+                        "total_impuestos": _f(item.get("total_impuestos", item.get("igv"))),
+                        "precio_unitario": _f(item.get("precio_unitario", item.get("costo_original"))),
+                        "descuento": _f(item.get("descuento")),
+                        "costo_original": _f(item.get("costo_original", item.get("precio_venta"))),
+                        "sku": item.get("sku"),
+                        "is_deleted": item.get("is_deleted", False),
+                        "is_updated": item.get("is_updated", False),
+                    })
 
                 nota_credito = getattr(venta, "nota_credito", None)
                 nota_credito_json = None
@@ -761,6 +1100,8 @@ class SalesTotalsView(APIView):
                         "fecha_emision": nota_credito.fecha_emision.isoformat(),
                     }
 
+                from apps.venta.utils import calcular_total_venta
+
                 ventas_json.append({
                     "id": venta.id,
                     "usuario": venta.usuario.id if venta.usuario else None,
@@ -773,10 +1114,10 @@ class SalesTotalsView(APIView):
                     "activo": venta.activo,
                     "tipo_comprobante": venta.tipo_comprobante,
                     "productos": productos_json,
-                    "total": venta.total,
-                    "subtotal": float(venta.subtotal),
-                    "gravado_total": float(venta.gravado_total),
-                    "igv_total": float(venta.igv_total),
+                    "total": calcular_total_venta(venta),
+                    "subtotal": float(venta.subtotal) if venta.subtotal is not None else None,
+                    "gravado_total": float(venta.gravado_total) if venta.gravado_total is not None else None,
+                    "igv_total": float(venta.igv_total) if venta.igv_total is not None else None,
                     "productos_json": json.dumps(venta.productos_json, indent=4),
                     "comprobante": comprobante_json,
                     "comprobante_nota_credito": nota_credito_json,
@@ -817,6 +1158,8 @@ class PaymentMethodsDistributionView(APIView):
             ventas = Venta.objects.filter(
                 tienda=tienda,
                 activo=True,
+                estado__in=["ACEPTADO", "aceptado", "Aceptado"],
+                comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
                 fecha_hora__year=year,
                 fecha_hora__month=month,
             ).values_list("metodo_pago", flat=True)
@@ -868,23 +1211,24 @@ class SalesSatisfactionView(APIView):
             if not tienda_id:
                 return Response({"error": "Se requiere el ID de la tienda."}, status=400)
 
-            ventas_mes_a = Venta.objects.filter(
-                tienda_id=tienda_id,
-                activo=True,
-                total__gt=0,
-                fecha_hora__year=year_a,
-                fecha_hora__month=month_a,
-                comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
-            ).aggregate(total=Sum("total"))["total"] or 0
+            from apps.venta.utils import calcular_total_venta
 
-            ventas_mes_b = Venta.objects.filter(
-                tienda_id=tienda_id,
-                activo=True,
-                total__gt=0,
-                fecha_hora__year=year_b,
-                fecha_hora__month=month_b,
-                comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
-            ).aggregate(total=Sum("total"))["total"] or 0
+            def _total_mes(year, month):
+                qs = Venta.objects.filter(
+                    tienda_id=tienda_id,
+                    activo=True,
+                    estado__in=["ACEPTADO", "aceptado", "Aceptado"],
+                    fecha_hora__year=year,
+                    fecha_hora__month=month,
+                    comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
+                ).only("productos_json", "total")
+                s = 0.0
+                for v in qs:
+                    s += calcular_total_venta(v)
+                return round(s, 2)
+
+            ventas_mes_a = _total_mes(year_a, month_a)
+            ventas_mes_b = _total_mes(year_b, month_b)
 
             if ventas_mes_b > 0:
                 porcentaje = round(((ventas_mes_a - ventas_mes_b) / ventas_mes_b) * 100, 2)
@@ -922,13 +1266,11 @@ class SalesTodayView(APIView):
 
             ventas = Venta.objects.filter(
                 tienda_id=tienda_id,
-                total__gt=0,
                 fecha_hora__range=(from_date_obj, to_date_obj),
-                comprobante__estado_sunat__in=["ACEPTADO", "aceptado"],
+                comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
+                estado__in=["ACEPTADO", "aceptado", "Aceptado"],
             ).select_related(
                 "comprobante", "nota_credito", "usuario", "tienda"
-            ).prefetch_related(
-                "ventaproducto_set__producto"
             )
 
             ventas_json = []
@@ -959,24 +1301,52 @@ class SalesTodayView(APIView):
                         "items": comprobante_venta.items,
                     }
 
-                productos_json = [
-                    {
-                        "id": p.id,
-                        "producto": p.producto.id if p.producto else None,
-                        "producto_nombre": p.producto.nombre if p.producto else None,
-                        "cantidad": p.cantidad,
-                        "valor_unitario": float(p.valor_unitario),
-                        "valor_venta": float(p.valor_venta),
-                        "base_igv": float(p.base_igv),
-                        "porcentaje_igv": float(p.porcentaje_igv),
-                        "igv": float(p.igv),
-                        "tipo_afectacion_igv": p.tipo_afectacion_igv,
-                        "total_impuestos": float(p.total_impuestos),
-                        "precio_unitario": float(p.precio_unitario),
-                        "producto_imagen": p.producto.imagen.url if p.producto.imagen else None,
-                    }
-                    for p in venta.ventaproducto_set.all()
-                ]
+                from apps.venta.utils import _parse_productos_json, VentaService
+                raw_productos = _parse_productos_json(venta.productos_json)
+                try:
+                    raw_productos = VentaService.enrich_productos_json(raw_productos, request, None, venta)
+                except Exception:
+                    pass
+                productos_json = []
+                for idx, item in enumerate(raw_productos):
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        cantidad = int(item.get("cantidad", 0) or 0)
+                    except Exception:
+                        try:
+                            cantidad = int(float(str(item.get("cantidad", 0))))
+                        except Exception:
+                            cantidad = 0
+                    def _f(v, d=0.0):
+                        if v is None or v == "":
+                            return d
+                        try:
+                            return float(v)
+                        except Exception:
+                            try:
+                                return float(str(v).replace(",", "."))
+                            except Exception:
+                                return d
+                    productos_json.append({
+                        "id": item.get("producto_id") or idx,
+                        "producto": item.get("producto_id"),
+                        "producto_nombre": item.get("producto_nombre") or item.get("nombre") or item.get("descripcion"),
+                        "cantidad": cantidad,
+                        "valor_unitario": _f(item.get("valor_unitario")),
+                        "valor_venta": _f(item.get("valor_venta")),
+                        "base_igv": _f(item.get("base_igv", item.get("valor_venta"))),
+                        "porcentaje_igv": _f(item.get("porcentaje_igv", 18.0)),
+                        "igv": _f(item.get("igv")),
+                        "tipo_afectacion_igv": item.get("tipo_afectacion_igv", "10"),
+                        "total_impuestos": _f(item.get("total_impuestos", item.get("igv"))),
+                        "precio_unitario": _f(item.get("precio_unitario", item.get("costo_original"))),
+                        "descuento": _f(item.get("descuento")),
+                        "costo_original": _f(item.get("costo_original", item.get("precio_venta"))),
+                        "producto_imagen": item.get("producto_imagen") or item.get("img_url") or item.get("imagen"),
+                        "sku": item.get("sku"),
+                        "is_deleted": item.get("is_deleted", False),
+                    })
 
                 nota_credito = getattr(venta, "nota_credito", None)
                 nota_credito_json = None
@@ -999,6 +1369,8 @@ class SalesTodayView(APIView):
                         "fecha_emision": nota_credito.fecha_emision.isoformat(),
                     }
 
+                from apps.venta.utils import calcular_total_venta
+
                 ventas_json.append({
                     "id": venta.id,
                     "usuario": venta.usuario.id if venta.usuario else None,
@@ -1011,10 +1383,10 @@ class SalesTodayView(APIView):
                     "activo": venta.activo,
                     "tipo_comprobante": venta.tipo_comprobante,
                     "productos": productos_json,
-                    "total": float(venta.total),
-                    "subtotal": float(venta.subtotal),
-                    "gravado_total": float(venta.gravado_total),
-                    "igv_total": float(venta.igv_total),
+                    "total": calcular_total_venta(venta),
+                    "subtotal": float(venta.subtotal) if venta.subtotal is not None else None,
+                    "gravado_total": float(venta.gravado_total) if venta.gravado_total is not None else None,
+                    "igv_total": float(venta.igv_total) if venta.igv_total is not None else None,
                     "productos_json": json.dumps(venta.productos_json, indent=4),
                     "comprobante": comprobante_json,
                     "comprobante_nota_credito": nota_credito_json,
@@ -1067,7 +1439,9 @@ class ClientesMasFrecuentesView(APIView):
                 tienda=tienda,
                 fecha_hora__year=anio,
                 fecha_hora__month=mes,
-                activo=True
+                activo=True,
+                estado__in=["ACEPTADO", "aceptado", "Aceptado"],
+                comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
             )
             .values("numero_documento_cliente", "nombre_cliente", "telefono_cliente")
             .annotate(total_compras=Count("id"))
@@ -1118,25 +1492,34 @@ class ClientesMasCompraronView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        clientes = (
-            Venta.objects
-            .filter(
-                tienda=tienda,
-                fecha_hora__year=anio,
-                fecha_hora__month=mes,
-                activo=True
-            )
-            .values("numero_documento_cliente", "nombre_cliente", "telefono_cliente")
-            .annotate(total_gastado=Sum("total"))
-            .order_by("-total_gastado")[:10]
-        )
+        from apps.venta.utils import calcular_total_venta
+
+        ventas_qs = Venta.objects.filter(
+            tienda=tienda,
+            fecha_hora__year=anio,
+            fecha_hora__month=mes,
+            activo=True,
+            estado__in=["ACEPTADO", "aceptado", "Aceptado"],
+            comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
+        ).only("numero_documento_cliente", "nombre_cliente", "telefono_cliente", "productos_json", "total")
+
+        # Agrupar por cliente sumando productos_json
+        agrupado = {}
+        for v in ventas_qs:
+            key = (v.numero_documento_cliente or "", v.nombre_cliente or "", v.telefono_cliente or "")
+            monto = calcular_total_venta(v)
+            if key not in agrupado:
+                agrupado[key] = {"nombre": v.nombre_cliente, "celular": v.telefono_cliente, "total_gastado": 0.0}
+            agrupado[key]["total_gastado"] += monto
+
+        clientes_sorted = sorted(agrupado.values(), key=lambda x: x["total_gastado"], reverse=True)[:10]
 
         resultado = []
-        for c in clientes:
+        for c in clientes_sorted:
             resultado.append({
-                "nombre": c["nombre_cliente"] or "Sin nombre",
-                "celular": c["telefono_cliente"] or "Sin celular",
-                "total_gastado": float(c["total_gastado"] or 0)
+                "nombre": c["nombre"] or "Sin nombre",
+                "celular": c["celular"] or "Sin celular",
+                "total_gastado": round(float(c["total_gastado"] or 0), 2)
             })
 
         return Response({

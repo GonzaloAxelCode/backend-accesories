@@ -24,15 +24,16 @@ class Venta(models.Model):
     gravado_total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00,null=True) # type: ignore
     igv_total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00,null=True) # type: ignore
     productos_json = models.JSONField(default=list, blank=True)  # Compatible con PostgreSQL y SQLite en Django 3.1+
+    cliente_json = models.JSONField(default=dict, blank=True, null=True)  # Snapshot completo del cliente al momento de la venta
     descuento_total= models.DecimalField(default=0,blank=True,max_digits=10, decimal_places=2,) # type: ignore
-       # Datos del cliente
+    # Datos del cliente
     tipo_documento_cliente = models.CharField(max_length=2, null=True)  # Ejemplo: 1 (DNI)
     numero_documento_cliente = models.CharField(max_length=15, null=True)
     nombre_cliente = models.CharField(max_length=255, null=True)  
     email_cliente = models.EmailField(max_length=255, null=True)
     telefono_cliente = models.EmailField(max_length=255, null=True)
     direccion_cliente = models.EmailField(max_length=255, null=True)
-    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True) 
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)
     class Meta:
         ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
 

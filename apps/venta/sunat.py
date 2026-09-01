@@ -101,11 +101,21 @@ class SunatOperations():
           for item in productosInventario:
                     inventario = get_object_or_404(Inventario, id=item["inventarioId"])
                     producto = inventario.producto
-                    cantidad = int(item["cantidad_final"])
-                    descuento = Decimal(item["descuento"])
-                    precio_base = Decimal(inventario.costo_venta) # type: ignore
+                    raw_cant = item.get("cantidad_final")
+                    if raw_cant in (None, ""):
+                        raise ValueError("cantidad_final es obligatoria")
+                    cantidad = int(raw_cant)
+                    if cantidad <= 0:
+                        raise ValueError("cantidad_final debe ser > 0")
+                    raw_desc = item.get("descuento", 0)
+                    if raw_desc in (None, ""):
+                        raw_desc = "0"
+                    descuento = Decimal(str(raw_desc))
+                    if inventario.costo_venta is None:
+                        raise ValueError(f"Producto '{producto.nombre}' sin precio de venta (costo_venta is None)")
+                    precio_base = Decimal(str(inventario.costo_venta)) # type: ignore
                     # Descuento prorrateado por unidad
-                    descuento_unitario = descuento / cantidad
+                    descuento_unitario = descuento / Decimal(cantidad)
                     # Precio final con IGV incluido
                     precio_unitario = precio_base - descuento_unitario
                     precio_unitario_original = precio_base

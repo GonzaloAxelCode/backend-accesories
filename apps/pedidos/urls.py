@@ -7,6 +7,7 @@ from apps.pedidos.views import (
     CancelarPedidoView,
     DetallePedidoView,
     ConfirmarEstadoPedidoView,
+    EliminarPedidoView,
 )
 
 urlpatterns = [
@@ -16,4 +17,5 @@ urlpatterns = [
     path('pedidos/<int:pedido_id>/actualizar/', ActualizarPedidoView.as_view(), name='actualizar-pedido'),
     path('pedidos/<int:pedido_id>/estado/', ConfirmarEstadoPedidoView.as_view(), name='confirmar-estado-pedido'),
     path('pedidos/<int:pedido_id>/cancelar/', CancelarPedidoView.as_view(), name='cancelar-pedido'),
+    path('pedidos/<int:pedido_id>/eliminar/', EliminarPedidoView.as_view(), name='eliminar-pedido'),
 ]

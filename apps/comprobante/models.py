@@ -7,8 +7,7 @@ from decimal import Decimal
 
 class ComprobanteElectronico(models.Model):
     venta = models.OneToOneField(
-        Venta, on_delete=models.CASCADE, related_name='comprobante',
-        
+        Venta, on_delete=models.SET_NULL, null=True, blank=True, related_name='comprobante',
     )
     tipo_comprobante = models.CharField(max_length=10)
     serie = models.CharField(max_length=4, null=True)  # Ejemplo: B001 o F001
