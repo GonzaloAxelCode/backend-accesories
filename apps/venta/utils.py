@@ -717,6 +717,21 @@ class SunatService:
         return f"{base}/src/api/boleta-post.php"
 
     @staticmethod
+    def _build_logo_url(tienda):
+        from django.conf import settings as django_settings
+        from urllib.parse import urljoin
+
+        domain = (getattr(django_settings, "DOMAIN", None) or "").rstrip("/")
+        media_url = (getattr(django_settings, "MEDIA_URL", "/media/") or "/media/")
+        logo = getattr(tienda, "logo_img", None)
+        if not domain or not logo:
+            return None
+        relative = urljoin(media_url, logo.name)
+        if not relative.startswith("/"):
+            relative = "/" + relative
+        return f"{domain}{relative}"
+
+    @staticmethod
     def build_comprobante_data(venta, tienda, serie, correlativo, gravado_total, igv_total, subtotal, total, leyenda, productos_items_for_sunat):
         return {
             "serie": serie,
@@ -729,13 +744,21 @@ class SunatService:
             "subTotal": float(subtotal + igv_total),
             "total": float(total),
             "leyenda": leyenda,
+            "logo_url": SunatService._build_logo_url(tienda),
             "cliente": {
                 "tipoDoc": venta.tipo_documento_cliente,
                 "numDoc": venta.numero_documento_cliente,
                 "nombre": venta.nombre_cliente,
             },
             "items": productos_items_for_sunat,
+            "tipo_style_boleta_ticket": tienda.tipo_style_boleta_ticket,
+            "tipo_style_boleta_pdf": tienda.tipo_style_boleta_pdf,
+            "tipo_style_factura_pdf": tienda.tipo_style_factura_pdf,
             "emisor": {
+                "claveSol": tienda.sol_password,
+                "userSol": tienda.sol_user,
+                "certPriv": tienda.cert_clave_privada,
+                "certPublic": tienda.cert_clave_publica,
                 "ruc": tienda.ruc,
                 "razonSocial": tienda.razon_social,
                 "nombreComercial": tienda.nombre,
@@ -750,12 +773,17 @@ class SunatService:
 
     @staticmethod
     def send_to_sunat(comprobante_data, tipo_comprobante):
+        import json
+        import traceback
         import requests
         from .exceptions import SunatError
         from core.settings import SUNAT_API_KEY
 
         php_url = SunatService.get_php_url(tipo_comprobante)
         try:
+            print(f"\n[SUNAT] Enviando comprobante a: {php_url}")
+            print(f"[SUNAT] Payload: {json.dumps(comprobante_data, default=str, indent=2, ensure_ascii=False)}")
+
             response = requests.post(
                 php_url,
                 json=comprobante_data,
@@ -765,17 +793,42 @@ class SunatService:
                 },
                 timeout=30,
             )
-            response.raise_for_status()
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as e:
+            print(f"[SUNAT][ERROR] No se pudo conectar al servidor de SUNAT: {e}")
+            print(traceback.format_exc())
             raise SunatError("No se pudo conectar al servidor de SUNAT")
-        except requests.exceptions.Timeout:
+        except requests.exceptions.Timeout as e:
+            print(f"[SUNAT][ERROR] Tiempo de espera agotado al conectar con SUNAT: {e}")
+            print(traceback.format_exc())
             raise SunatError("Tiempo de espera agotado al conectar con SUNAT")
         except requests.exceptions.RequestException as e:
+            print(f"[SUNAT][ERROR] Error de conexión con SUNAT: {e}")
+            print(traceback.format_exc())
             raise SunatError(str(e))
+
+        print(f"[SUNAT] HTTP {response.status_code}")
+        print(f"[SUNAT] Respuesta del endpoint: {response.text}")
+
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            err_detail = response.text.strip()
+
+            print("\n[SUNAT][ERROR] El endpoint PHP respondió con un error HTTP:")
+            print(f"[SUNAT][ERROR] Status code: {response.status_code}")
+            print(f"[SUNAT][ERROR] URL: {php_url}")
+            print(f"[SUNAT][ERROR] Cuerpo de la respuesta: {response.text}")
+            print(f"[SUNAT][ERROR] Detalle excepción: {e}")
+            print("==========================================")
+
+            raise SunatError(f"El endpoint PHP devolvió el error HTTP {response.status_code}: {err_detail}")
 
         try:
             return response.json()
         except ValueError:
+            print("\n[SUNAT][ERROR] Respuesta inválida (no es JSON) del servidor de SUNAT:")
+            print(f"[SUNAT][ERROR] HTTP {response.status_code} | Body: {response.text}")
+            print("==========================================")
             raise SunatError("Respuesta inválida del servidor de SUNAT")
 
     @staticmethod

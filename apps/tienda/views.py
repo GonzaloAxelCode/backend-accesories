@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.db import transaction
 
 from core.permissions import IsSuperUser, IsAdminTienda
 from .models import Tienda
@@ -38,7 +39,7 @@ class GetAllTiendas(APIView):
             tiendas = Tienda.objects.filter(is_deleted=False).filter(
                 Q(id=user.tienda.id) | Q(tienda_padre=user.tienda) | Q(propietario=user)  # type: ignore
             ).distinct()
-        serializer = TiendaSerializer(tiendas, many=True)
+        serializer = TiendaSerializer(tiendas, many=True, context={"request": request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -85,19 +86,19 @@ class CreateTienda(APIView):
             # Admin no puede elegir otro propietario ni serie libremente (se respeta UpdateTienda restriction, pero aquí también)
             # Permitir serie, pero será validada por serializer
 
-        serializer = TiendaSerializer(data=data)
+        serializer = TiendaSerializer(data=data, context={"request": request})
         if serializer.is_valid():
             tienda = serializer.save()
             # Sucursal: el propietario debe ser el mismo de la tienda padre
             if tienda.tienda_padre and tienda.propietario != tienda.tienda_padre.propietario:
                 tienda.propietario = tienda.tienda_padre.propietario
                 tienda.save(update_fields=["propietario"])
-                serializer = TiendaSerializer(tienda)
+                serializer = TiendaSerializer(tienda, context={"request": request})
             # Asegurar propietario para admin que crea tienda principal sin propietario explícito
             elif not user.is_superuser and tienda.propietario is None and tienda.tienda_padre is None:
                 tienda.propietario = user  # type: ignore
                 tienda.save(update_fields=["propietario"])
-                serializer = TiendaSerializer(tienda)
+                serializer = TiendaSerializer(tienda, context={"request": request})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -113,7 +114,7 @@ class GetTienda(APIView):
     def get(self, request, id):
         tienda = get_object_or_404(Tienda, id=id, is_deleted=False)
         self.check_object_permissions(request, tienda)
-        serializer = TiendaSerializer(tienda)
+        serializer = TiendaSerializer(tienda, context={"request": request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -122,6 +123,7 @@ class UpdateTienda(APIView):
     permission_classes = [IsAuthenticated, IsAdminTienda]
     parser_classes = [MultiPartParser, FormParser]
 
+    @transaction.atomic
     def post(self, request, id):
         tienda = get_object_or_404(Tienda, id=id)
         self.check_object_permissions(request, tienda)
@@ -133,11 +135,23 @@ class UpdateTienda(APIView):
             for campo in campos_restringidos:
                 data.pop(campo, None)
 
-        serializer = TiendaSerializer(tienda, data=data, partial=True)
+        serializer = TiendaSerializer(tienda, data=data, partial=True, context={"request": request})
         if serializer.is_valid():
             if 'logo_img' in request.FILES and tienda.logo_img:
                 tienda.logo_img.delete(save=False)
             serializer.save()
+
+            # Propagar campos de empresa a tiendas hijas (sucursales)
+            campos_empresa = ['ruc', 'razon_social', 'sol_password', 'cert_clave_publica']
+            campos_editados = [c for c in campos_empresa if c in data]
+
+            if campos_editados:
+                sucursales = Tienda.objects.filter(tienda_padre=tienda)
+                for sucursal in sucursales:
+                    for campo in campos_editados:
+                        setattr(sucursal, campo, data.get(campo))
+                    sucursal.save(update_fields=campos_editados)
+
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -186,6 +200,44 @@ class HabilitarTiendaEliminada(APIView):
 # ADMIN TIENDA: Ver mi tienda
 # ============================================
 
+class UpdateTiendaStyles(APIView):
+    """Actualizar estilos de tienda (boleta ticket, boleta pdf, factura pdf)"""
+    permission_classes = [IsAuthenticated, IsAdminTienda]
+
+    def patch(self, request, id):
+        tienda = get_object_or_404(Tienda, id=id)
+        self.check_object_permissions(request, tienda)
+
+        tipo_style_boleta_ticket = request.data.get('tipo_style_boleta_ticket')
+        tipo_style_boleta_pdf = request.data.get('tipo_style_boleta_pdf')
+        tipo_style_factura_pdf = request.data.get('tipo_style_factura_pdf')
+
+        if all(v in (None, '') for v in (tipo_style_boleta_ticket, tipo_style_boleta_pdf, tipo_style_factura_pdf)):
+            return Response(
+                {"error": "Debes enviar 'tipo_style_boleta_ticket', 'tipo_style_boleta_pdf' o 'tipo_style_factura_pdf'."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        for nombre, valor in (
+            ('tipo_style_boleta_ticket', tipo_style_boleta_ticket),
+            ('tipo_style_boleta_pdf', tipo_style_boleta_pdf),
+            ('tipo_style_factura_pdf', tipo_style_factura_pdf),
+        ):
+            if valor in (None, ''):
+                continue
+            if not isinstance(valor, str) or len(valor) > 100:
+                return Response(
+                    {"error": f"'{nombre}' debe ser string de máximo 100 caracteres."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            setattr(tienda, nombre, valor)
+
+        tienda.save()
+
+        serializer = TiendaSerializer(tienda, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
 class GetMiTiendaView(APIView):
     """Admin tienda: ver mi tienda"""
     permission_classes = [IsAuthenticated]
@@ -194,7 +246,7 @@ class GetMiTiendaView(APIView):
         user = request.user
         if user.is_superuser:
             tiendas = Tienda.objects.filter(is_deleted=False)
-            return Response(TiendaSerializer(tiendas, many=True).data, status=status.HTTP_200_OK)
+            return Response(TiendaSerializer(tiendas, many=True, context={"request": request}).data, status=status.HTTP_200_OK)
 
         if not user.tienda:
             return Response(
@@ -206,6 +258,6 @@ class GetMiTiendaView(APIView):
             tienda_padre=user.tienda, is_deleted=False
         )
         return Response(
-            TiendaSerializer(sucursales, many=True).data,
+            TiendaSerializer(sucursales, many=True, context={"request": request}).data,
             status=status.HTTP_200_OK
         )

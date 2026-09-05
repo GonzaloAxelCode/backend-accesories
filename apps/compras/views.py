@@ -12,8 +12,11 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
 
+from rest_framework.parsers import MultiPartParser, FormParser
+
+
 from apps.proveedor.models import Proveedor
-from .models import ComprobanteCompra
+from .models import ComprobanteCompra, ComprobanteCompraFiles
 
 
 class CompraPagination(PageNumberPagination):
@@ -391,6 +394,259 @@ class ListaComprobantesCompraView(APIView):
                 "results": comprobantes_json,
                 "search_found": "found"
             }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": "Error interno del servidor", "detalle": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class SubirComprobanteCompraFilesView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        try:
+            data = request.data
+            tienda = request.user.tienda
+
+            tipo_comprobante = data.get("tipo_comprobante")
+            if not tipo_comprobante:
+                return Response(
+                    {"error": "tipo_comprobante es obligatorio (01 o 03)"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if tipo_comprobante not in ["01", "03"]:
+                return Response(
+                    {"error": "tipo_comprobante debe ser '01' (Factura) o '03' (Boleta)"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            xml_file = request.FILES.get("xml")
+            pdf_file = request.FILES.get("pdf")
+
+            if not xml_file and not pdf_file:
+                return Response(
+                    {"error": "Debe subir al menos un archivo XML o PDF"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                from django.conf import settings
+                import logging
+                from django.utils import timezone
+                import os
+                from botocore.exceptions import ClientError
+
+                logger = logging.getLogger(__name__)
+
+                tienda_nombre = tienda.nombre.strip().lower().replace(" ", "_")
+                tipo_nombre = "factura" if tipo_comprobante == "01" else "boleta"
+                timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+
+                xml_url = None
+                pdf_url = None
+
+                if settings.DEBUG:
+                    from django.core.files.storage import FileSystemStorage
+
+                    fs = FileSystemStorage()
+                    base_dir = os.path.join("compras_beta", tienda_nombre, tipo_nombre)
+
+                    if xml_file:
+                        ext = os.path.splitext(xml_file.name)[1].lower()
+                        if ext != ".xml":
+                            return Response(
+                                {"error": "El archivo XML debe tener extensión .xml"},
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+                        filename = f"xml_{timestamp}{ext}"
+                        rel_path = os.path.join(base_dir, filename)
+                        fs.save(rel_path, xml_file)
+                        xml_url = fs.url(rel_path)
+                        logger.info("XML guardado localmente: %s", xml_url)
+
+                    if pdf_file:
+                        ext = os.path.splitext(pdf_file.name)[1].lower()
+                        if ext != ".pdf":
+                            return Response(
+                                {"error": "El archivo PDF debe tener extensión .pdf"},
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+                        filename = f"pdf_{timestamp}{ext}"
+                        rel_path = os.path.join(base_dir, filename)
+                        fs.save(rel_path, pdf_file)
+                        pdf_url = fs.url(rel_path)
+                        logger.info("PDF guardado localmente: %s", pdf_url)
+                else:
+                    import boto3
+
+                    if not all([
+                        settings.R2_ACCOUNT_ID,
+                        settings.R2_ACCESS_KEY_ID,
+                        settings.R2_SECRET_ACCESS_KEY,
+                        settings.R2_BUCKET_NAME,
+                        settings.R2_ENDPOINT_URL,
+                    ]):
+                        logger.error("Configuración R2 incompleta")
+                        return Response(
+                            {"error": "Configuración de Cloudflare R2 incompleta en el servidor."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        )
+
+                    logger.info("Conectando a R2: endpoint=%s, bucket=%s", settings.R2_ENDPOINT_URL, settings.R2_BUCKET_NAME)
+
+                    s3_client = boto3.client(
+                        "s3",
+                        endpoint_url=settings.R2_ENDPOINT_URL,
+                        aws_access_key_id=settings.R2_ACCESS_KEY_ID,
+                        aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
+                        region_name="auto",
+                    )
+
+                    try:
+                        s3_client.head_bucket(Bucket=settings.R2_BUCKET_NAME)
+                        logger.info("Bucket R2 accesible: %s", settings.R2_BUCKET_NAME)
+                    except ClientError as e:
+                        logger.error("No se puede acceder al bucket R2: %s", e)
+                        return Response(
+                            {"error": "No se puede acceder al bucket de R2.", "detalle": str(e)},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        )
+
+                    base_path = f"compras/{tienda_nombre}/{tipo_nombre}"
+
+                    def build_public_url(key):
+                        if settings.R2_PUBLIC_URL:
+                            return f"{settings.R2_PUBLIC_URL.rstrip('/')}/{key}"
+                        if settings.R2_ENDPOINT_URL and settings.R2_BUCKET_NAME:
+                            endpoint = settings.R2_ENDPOINT_URL.rstrip("/")
+                            return f"{endpoint}/{settings.R2_BUCKET_NAME}/{key}"
+                        return None
+
+                    if xml_file:
+                        ext = os.path.splitext(xml_file.name)[1].lower()
+                        if ext != ".xml":
+                            return Response(
+                                {"error": "El archivo XML debe tener extensión .xml"},
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+                        xml_key = f"{base_path}/xml_{timestamp}{ext}"
+                        try:
+                            s3_client.upload_fileobj(
+                                xml_file,
+                                settings.R2_BUCKET_NAME,
+                                xml_key,
+                                ExtraArgs={"ContentType": "application/xml"},
+                            )
+                            xml_url = build_public_url(xml_key)
+                            logger.info("XML subido a R2: %s", xml_url)
+                        except ClientError as e:
+                            logger.error("Error subiendo XML a R2: %s", e)
+                            return Response(
+                                {"error": "Error al subir XML a Cloudflare R2", "detalle": str(e)},
+                                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            )
+
+                    if pdf_file:
+                        ext = os.path.splitext(pdf_file.name)[1].lower()
+                        if ext != ".pdf":
+                            return Response(
+                                {"error": "El archivo PDF debe tener extensión .pdf"},
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+                        pdf_key = f"{base_path}/pdf_{timestamp}{ext}"
+                        try:
+                            s3_client.upload_fileobj(
+                                pdf_file,
+                                settings.R2_BUCKET_NAME,
+                                pdf_key,
+                                ExtraArgs={"ContentType": "application/pdf"},
+                            )
+                            pdf_url = build_public_url(pdf_key)
+                            logger.info("PDF subido a R2: %s", pdf_url)
+                        except ClientError as e:
+                            logger.error("Error subiendo PDF a R2: %s", e)
+                            return Response(
+                                {"error": "Error al subir PDF a Cloudflare R2", "detalle": str(e)},
+                                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            )
+
+                if not xml_url and not pdf_url:
+                    logger.error("No se generaron URLs para ningún archivo")
+                    return Response(
+                        {"error": "No se pudo generar URL para ningún archivo."},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+
+                registro = ComprobanteCompraFiles.objects.create(
+                    tienda=tienda,
+                    tipo_comprobante=tipo_comprobante,
+                    observaciones=data.get("observaciones"),
+                    xml_url=xml_url,
+                    pdf_url=pdf_url,
+                )
+
+                return Response({
+                    "message": "Archivos subidos exitosamente",
+                    "data": {
+                        "id": registro.id,
+                        "tienda": tienda.id,
+                        "tipo_comprobante": registro.get_tipo_comprobante_display(),
+                        "xml_url": registro.xml_url,
+                        "pdf_url": registro.pdf_url,
+                        "observaciones": registro.observaciones,
+                        "date_created": registro.date_created.isoformat(),
+                    }
+                }, status=status.HTTP_201_CREATED)
+
+            except ImportError:
+                return Response(
+                    {"error": "boto3 no está instalado. Ejecuta: pip install boto3"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            except ClientError as e:
+                return Response(
+                    {"error": "Error al subir archivos a Cloudflare R2", "detalle": str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+        except Exception as e:
+            return Response(
+                {"error": "Error interno del servidor", "detalle": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ListarComprobanteCompraFilesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            tienda = request.user.tienda
+            tipo = request.query_params.get("tipo_comprobante")
+            qs = ComprobanteCompraFiles.objects.filter(tienda=tienda)
+            if tipo:
+                qs = qs.filter(tipo_comprobante=tipo)
+
+            qs = qs.order_by("-date_created")
+            data = [
+                {
+                    "id": r.id,
+                    "tienda": r.tienda.id,
+                    "tipo_comprobante": r.get_tipo_comprobante_display(),
+                    "tipo_comprobante_codigo": r.tipo_comprobante,
+                    "xml_url": r.xml_url,
+                    "pdf_url": r.pdf_url,
+                    "observaciones": r.observaciones,
+                    "date_created": r.date_created.isoformat() if r.date_created else None,
+                }
+                for r in qs
+            ]
+
+            return Response({"results": data}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response(

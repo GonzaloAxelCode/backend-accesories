@@ -25,6 +25,13 @@ ENVIRONMENT = env
 SUNAT_PHP = os.getenv("SUNAT_PHP", "").strip()
 SUNAT_API_KEY = os.getenv("SUNAT_API_KEY", "").strip()
 
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "")
+R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL", "")
+R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "")
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 

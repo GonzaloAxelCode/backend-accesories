@@ -817,6 +817,85 @@ class ConfirmarEstadoPedidoView(APIView):
             )
 
 
+class MarcarPedidoPagadoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    ESTADOS_VALIDOS = ['COTIZADO', 'PENDIENTE', 'CONFIRMADO', 'EN_PREPARACION', 'LISTO', 'ENTREGADO', 'CANCELADO']
+    ESTADOS_PAGO_VALIDOS = ['PENDIENTE', 'PARCIAL', 'PAGADO']
+    PRIORIDADES_VALIDAS = ['NORMAL', 'URGENTE']
+
+    CAMPOS_EDITABLES = {
+        'estado': ESTADOS_VALIDOS,
+        'estado_pago': ESTADOS_PAGO_VALIDOS,
+        'prioridad': PRIORIDADES_VALIDAS,
+    }
+
+    def put(self, request, pedido_id):
+        try:
+            tienda_id = request.user.tienda
+
+            try:
+                pedido = Pedido.objects.get(id=pedido_id, tienda_id=tienda_id, activo=True)
+            except Pedido.DoesNotExist:
+                return Response(
+                    {"error": "Pedido no encontrado"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if pedido.estado in ('CANCELADO', 'ENTREGADO'):
+                if 'estado' in request.data:
+                    valor_estado = request.data.get('estado')
+                    if valor_estado not in (None, '') and valor_estado != pedido.estado:
+                        return Response(
+                            {"error": f"No se puede cambiar el estado de un pedido {pedido.estado.lower()}"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+            campos_actualizados = []
+
+            for campo, valores_validos in self.CAMPOS_EDITABLES.items():
+                if campo not in request.data:
+                    continue
+
+                valor = request.data.get(campo)
+
+                if valor is None or valor == "":
+                    continue
+
+                if valor not in valores_validos:
+                    return Response(
+                        {"error": f"Valor inválido para '{campo}': {valor}. Valores permitidos: {', '.join(valores_validos)}"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if getattr(pedido, campo) != valor:
+                    setattr(pedido, campo, valor)
+                    campos_actualizados.append(campo)
+
+            if campos_actualizados:
+                pedido.save()
+
+            return Response({
+                "mensaje": "Pedido actualizado" if campos_actualizados else "Sin cambios",
+                "campos_actualizados": campos_actualizados,
+                "pedido": {
+                    "id": pedido.id,
+                    "numero_pedido": pedido.numero_pedido,
+                    "estado": pedido.estado,
+                    "estado_pago": pedido.estado_pago,
+                    "prioridad": pedido.prioridad,
+                    "total": float(pedido.total),
+                    "nombre_cliente": pedido.nombre_cliente,
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": "Error interno del servidor", "detalle": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
 class EliminarPedidoView(APIView):
     permission_classes = [IsAuthenticated]
 

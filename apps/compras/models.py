@@ -76,3 +76,23 @@ class ComprobanteCompra(models.Model):
 
     class Meta:
         ordering = ["-date_created"]
+
+
+class ComprobanteCompraFiles(models.Model):
+    TIPO_COMPROBANTE_CHOICES = [
+        ('01', 'Factura'),
+        ('03', 'Boleta'),
+    ]
+
+    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE)
+    tipo_comprobante = models.CharField(max_length=2, choices=TIPO_COMPROBANTE_CHOICES, default='01')
+    observaciones = models.TextField(blank=True, null=True)
+    xml_url = models.URLField(max_length=300, blank=True, null=True)
+    pdf_url = models.URLField(max_length=300, blank=True, null=True)
+    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.get_tipo_comprobante_display()} - {self.tienda} - {self.date_created}"
+
+    class Meta:
+        ordering = ["-date_created"]

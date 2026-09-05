@@ -444,7 +444,7 @@ class DailyTopCategoriesReportView(APIView):
                     agrupado[key]["ingreso_neto"] += ingreso
                     if agrupado[key]["nombre"] is None:
                         agrupado[key]["nombre"] = cat_nombre
-                        agrupado[key]["codigo"] = item.get("categoria_codigo") or item.get("siglas") or "N/A"
+                        agrupado[key]["codigo"] = item.get("categoria_codigo") or "N/A"
                         agrupado[key]["color"] = item.get("categoria_color")
                         agrupado[key]["categoria_id"] = cat_id
 
@@ -1036,7 +1036,7 @@ class TopCategoriesReportView(APIView):
                     agrupado[key]["total_ingresos"] += ingreso
                     if agrupado[key]["nombre"] is None:
                         agrupado[key]["nombre"] = cat_nombre
-                        agrupado[key]["codigo"] = item.get("categoria_codigo") or item.get("siglas") or None
+                        agrupado[key]["codigo"] = item.get("categoria_codigo") or None
                         agrupado[key]["categoria_id"] = cat_id
 
             sorted_cats = sorted(agrupado.items(), key=lambda x: x[1]["total_ingresos"], reverse=True)

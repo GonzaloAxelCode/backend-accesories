@@ -57,6 +57,24 @@ class ProductoSerializer(serializers.ModelSerializer):
     # 🖼️ Manejo de imagen
     # ------------------------
 
+    def validate_nombre(self, value):
+        tienda = None
+        request = self.context.get("request")
+        if request:
+            tienda = getattr(request.user, "tienda", None)
+
+        if not tienda:
+            raise serializers.ValidationError("No se pudo determinar la tienda del usuario.")
+
+        qs = Producto.objects.filter(nombre__iexact=value, tienda=tienda, activo=True)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+
+        if qs.exists():
+            raise serializers.ValidationError("Ya existe un producto con este nombre en la tienda.")
+
+        return value
+
     def update(self, instance, validated_data):
         # Si se sube nueva imagen, borrar la anterior
         if 'imagen' in validated_data and validated_data['imagen']:

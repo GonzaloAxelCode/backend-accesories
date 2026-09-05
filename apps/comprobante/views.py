@@ -37,6 +37,20 @@ from apps.venta.utils import ComprobanteService
 from core.permissions import CanCancelSalePermission, CanMakeSalePermission
 from core.settings import SUNAT_PHP, SUNAT_API_KEY
 from rest_framework.permissions import IsAuthenticated
+from django.conf import settings as django_settings
+from urllib.parse import urljoin
+
+
+def _build_logo_url(tienda):
+    domain = (getattr(django_settings, "DOMAIN", None) or "").rstrip("/")
+    media_url = (getattr(django_settings, "MEDIA_URL", "/media/") or "/media/")
+    logo = getattr(tienda, "logo_img", None)
+    if not domain or not logo:
+        return None
+    relative = urljoin(media_url, logo.name)
+    if not relative.startswith("/"):
+        relative = "/" + relative
+    return f"{domain}{relative}"
 
 class ConsultaDocumentoView(APIView):
     API_TOKEN = "7575|WSDJNfDbCzRGohY4KRLEtyjPyjXX0Zm2XXlVR1Sz"
@@ -216,18 +230,25 @@ class RegistrarNotaCreditoView(APIView):
                     "correlativo": comprobante.correlativo,
                 },
                 "cliente": cliente,
-                "items": comprobante.items,
-                  "emisor" : {
+"items": comprobante.items,
+            "logo_url": _build_logo_url(tienda),
+            "tipo_style_boleta_ticket": tienda.tipo_style_boleta_ticket,
+                "tipo_style_boleta_pdf": tienda.tipo_style_boleta_pdf,
+                "tipo_style_factura_pdf": tienda.tipo_style_factura_pdf,
+                   "emisor" : {
+                                    "claveSol": tienda.sol_password,
+                                    "userSol": tienda.sol_user,
+                                    "certPriv": tienda.cert_clave_privada,
+                                    "certPublic": tienda.cert_clave_publica,
                                     "ruc": tienda.ruc,
                                     "razonSocial": tienda.razon_social,
                                     "nombreComercial": tienda.nombre,
-                                    # ⚠️ estos debes ajustarlos según tu modelo real
-                                    "ubigeo": "150101",  # 👈 deberías guardarlo en BD luego
+                                    "ubigeo": "150101",
                                     "departamento": "LIMA",
                                     "provincia": "LIMA",
                                     "distrito": "LIMA",
                                     "urbanizacion": "-",
-                                    "direccion": tienda.direccion or "-"
+                                    "direccion": tienda.direccion or "-",
                     }
             }
 

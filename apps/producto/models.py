@@ -22,31 +22,11 @@ class Producto(models.Model):
     tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE,default=1) # type: ignore
     date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)     
     def save(self, *args, **kwargs):
-        if not self.sku and self.categoria:
-
-            # Obtener siglas y limitar a 4 letras
-            siglas = self.categoria.siglas_nombre_categoria.upper()[:4] # type: ignore
-            siglas = siglas.ljust(4, 'X')  # Rellena con X si tiene menos de 4 letras
-
-            # Buscar el último producto de la categoría
-            ultimo_producto = Producto.objects.filter(
-                categoria=self.categoria
-            ).order_by('-id').first()
-
-            # Obtener correlativo
-            if ultimo_producto:
-                try:
-                    ultimo_numero = int(ultimo_producto.sku.split('-')[1])
-                except:
-                    ultimo_numero = 0
-                nuevo_numero = ultimo_numero + 1
-            else:
-                nuevo_numero = 1
-
-            # Formar SKU: ABCD-0001
-            self.sku = f"{siglas}-{nuevo_numero:04d}"
-
         super().save(*args, **kwargs)
+
+        if not self.sku:
+            self.sku = f"PROD-{self.id:06d}"
+            super().save(update_fields=["sku"])
     
 
     def __str__(self):
