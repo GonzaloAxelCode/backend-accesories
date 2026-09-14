@@ -280,7 +280,7 @@ class ProductosConMenorStockView(APIView):
 
         inventarios = (
             Inventario.objects
-            .filter(tienda=tienda)
+            .filter(tienda=tienda, activo=True, producto__activo=True)
             .select_related('producto')
             .order_by('cantidad')[:10]
         )
