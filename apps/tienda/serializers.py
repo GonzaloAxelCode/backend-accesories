@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from apps.user.models import UserAccount
 from apps.user.serializers import UserSerializer
-from .models import Tienda
+from .models import Tienda, PlanSuscripcion, UsoMensualTienda
 
 
 class PropietarioDataSerializer(serializers.ModelSerializer):
@@ -26,10 +26,25 @@ class PropietarioDataSerializer(serializers.ModelSerializer):
         return f"{obj.first_name} {obj.last_name}".strip()
 
 
+class PlanSuscripcionSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = PlanSuscripcion
+        fields = [
+            'id', 'nombre_plan', 'descripcion', 'lista_descripcion',
+            'limite_boletas',
+            'limite_facturas', 'limite_personal', 'precio_mensual',
+            'precio_anual',
+            'moneda', 'periodo_facturacion', 'activo', 'fecha_creacion'
+        ]
+
+
 class TiendaSerializer(serializers.ModelSerializer):
 
     users_tienda = UserSerializer(many=True, read_only=True)
     propietario_data = PropietarioDataSerializer(source="propietario", read_only=True)
+    subscripcion_data = PlanSuscripcionSerializer(source="plan", read_only=True)
+    tienda_stats = serializers.SerializerMethodField()
 
     class Meta:
         model = Tienda
@@ -45,6 +60,39 @@ class TiendaSerializer(serializers.ModelSerializer):
         if qs.exists():
             raise serializers.ValidationError("Ya existe una tienda con este nombre.")
         return value
+
+    def get_tienda_stats(self, obj):
+        from django.db.models import Count, Q, Sum
+
+        from apps.venta.models import Venta
+
+        # Solo boletas y facturas (case-insensitive: en BD vienen como
+        # 'Boleta'/'Factura'). Las ANULADAS no cuentan. Las notas de
+        # crédito viven en otro modelo y son ilimitadas: no se cuentan.
+        base = Venta.objects.filter(tienda=obj, activo=True).exclude(
+            estado__iexact="ANULADA"
+        )
+        stats = base.aggregate(
+            boletas=Count("pk", filter=Q(tipo_comprobante__iexact="boleta")),
+            facturas=Count("pk", filter=Q(tipo_comprobante__iexact="factura")),
+            total=Sum(
+                "total",
+                filter=Q(
+                    tipo_comprobante__iexact="boleta"
+                ) | Q(tipo_comprobante__iexact="factura"),
+            ),
+        )
+        boletas = stats["boletas"] or 0
+        facturas = stats["facturas"] or 0
+        return {
+            "total_comprobantes": boletas + facturas,
+            "boletas": boletas,
+            "facturas": facturas,
+            "total_facturado": str(stats["total"] or 0),
+            "num_personal": obj.users_tienda.count(),
+            "fecha_creacion": obj.date_created.isoformat() if obj.date_created else None,
+            "nombre_suscripcion": obj.plan.nombre_plan if obj.plan else None,
+        }
 
     def _enrich_user(self, user_data, instance, all_permissions):
         try:

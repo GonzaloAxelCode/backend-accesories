@@ -248,6 +248,22 @@ class VentaService:
         return False
 
     @staticmethod
+    def _is_categoria_deleted(categoria):
+        """True si la categoría fue eliminada (soft delete: activo=False o '(Delete)' en nombre).
+
+        A diferencia de producto, categoria None significa 'sin categoría', no eliminada.
+        """
+        if categoria is None:
+            return False
+        # activo=False -> eliminada (DeactivateCategoria/DeleteCategoria)
+        if not getattr(categoria, "activo", True):
+            return True
+        nombre = getattr(categoria, "nombre", "") or ""
+        if "(Delete)" in nombre:
+            return True
+        return False
+
+    @staticmethod
     def _check_updated(snapshot, producto, inventario):
         """Compara snapshot vs estado actual. Retorna (is_updated, updated_fields)."""
         updated = []
@@ -329,6 +345,23 @@ class VentaService:
         categoria = getattr(producto, "categoria", None) if producto else None
         cat_id = categoria.id if categoria else calculo.get("categoria_id")
         cat_nombre = categoria.nombre if categoria else calculo.get("categoria_nombre")
+        cat_color = getattr(categoria, "color", None) if categoria is not None else None
+        cat_imagen = None
+        try:
+            if categoria is not None and getattr(categoria, "imagen", None):
+                if hasattr(categoria.imagen, "url") and categoria.imagen:
+                    cat_imagen = categoria.imagen.url
+        except Exception:
+            cat_imagen = None
+        categoria_data = {
+            "categoria_id": cat_id,
+            "nombre": cat_nombre,
+            "descripcion": getattr(categoria, "descripcion", None) if categoria is not None else None,
+            "color": cat_color,
+            "imagen": cat_imagen,
+            "activo": getattr(categoria, "activo", True) if categoria is not None else True,
+            "is_deleted": VentaService._is_categoria_deleted(categoria),
+        }
         # precio compra snapshot
         precio_compra = None
         if calculo.get("costo_compra") is not None:
@@ -355,6 +388,8 @@ class VentaService:
             "sku": getattr(producto, "sku", None) if producto else None,
             "categoria_id": cat_id,
             "categoria_nombre": cat_nombre,
+            "categoria_color": cat_color,
+            "categoria_data": categoria_data,
             "precio_compra": precio_compra,
             "costo_compra": precio_compra,
             "producto_imagen": producto_imagen,
@@ -490,12 +525,51 @@ class VentaService:
             if item.get("is_deleted"):
                 item["is_updated"] = False
                 item["updated_fields"] = []
+                prod_curr, inv_curr = (None, None)
             else:
                 prod_curr, inv_curr = get_current(pid) if pid is not None else (None, None)
                 # si snapshot viejo no tenía campos para comparar, _check_updated lo ignora
                 is_upd, fields = VentaService._check_updated(item, prod_curr, inv_curr)
                 item["is_updated"] = is_upd
                 item["updated_fields"] = fields
+
+            # --- categoria_data (backfill para ventas viejas sin snapshot) ---
+            if not isinstance(item.get("categoria_data"), dict):
+                if prod_curr is None and pid is not None and not item.get("is_deleted"):
+                    prod_curr, _ = get_current(pid)
+                cat_live = getattr(prod_curr, "categoria", None) if prod_curr is not None else None
+                if cat_live is not None:
+                    try:
+                        cat_img = cat_live.imagen.url if getattr(cat_live, "imagen", None) and cat_live.imagen else None
+                    except Exception:
+                        cat_img = None
+                    if cat_img and request is not None and cat_img.startswith("/"):
+                        try:
+                            cat_img = request.build_absolute_uri(cat_img)
+                        except Exception:
+                            pass
+                    item["categoria_data"] = {
+                        "categoria_id": cat_live.id,
+                        "nombre": cat_live.nombre,
+                        "descripcion": getattr(cat_live, "descripcion", None),
+                        "color": getattr(cat_live, "color", None),
+                        "imagen": cat_img,
+                        "activo": getattr(cat_live, "activo", True),
+                        "is_deleted": VentaService._is_categoria_deleted(cat_live),
+                    }
+                    if not item.get("categoria_color") and getattr(cat_live, "color", None):
+                        item["categoria_color"] = cat_live.color
+                else:
+                    # sin objeto live: conservar snapshot plano existente
+                    item["categoria_data"] = {
+                        "categoria_id": item.get("categoria_id"),
+                        "nombre": item.get("categoria_nombre") or "Sin categoría",
+                        "descripcion": None,
+                        "color": item.get("categoria_color"),
+                        "imagen": None,
+                        "activo": True,
+                        "is_deleted": "(Delete)" in str(item.get("categoria_nombre") or ""),
+                    }
 
             enriched.append(item)
         return enriched

@@ -2,7 +2,9 @@ from django.urls import path
 from .views import (
     CreateTienda, GetAllTiendas, GetTienda, UpdateTienda,
     DeactivateTienda, HabilitarTiendaEliminada, GetMiTiendaView,
-    UpdateTiendaStyles
+    UpdateTiendaStyles, GetPlanosYSuscripcionTienda,
+    CreatePlanSuscripcion, ListPlanSuscripcion, ChangePlanTienda,
+    UpdatePlanSuscripcion
 )
 
 urlpatterns = [
@@ -19,4 +21,11 @@ urlpatterns = [
 
     # Mi tienda
     path('mi-tienda/', GetMiTiendaView.as_view(), name='get_mi_tienda'),
+
+    # Planes y suscripción de tienda
+    path('tiendas/<int:tienda_id>/planes/', GetPlanosYSuscripcionTienda.as_view(), name='get_planes_tienda'),
+    path('planes/crear/', CreatePlanSuscripcion.as_view(), name='create_plan'),
+    path('planes/', ListPlanSuscripcion.as_view(), name='list_plans'),
+    path('planes/<int:plan_id>/', UpdatePlanSuscripcion.as_view(), name='update_plan'),
+    path('tiendas/<int:tienda_id>/cambiar-plan/', ChangePlanTienda.as_view(), name='change_plan_tienda'),
 ]

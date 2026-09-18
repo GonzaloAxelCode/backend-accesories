@@ -6,12 +6,13 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import transaction
 
 from core.permissions import IsSuperUser, IsAdminTienda
-from .models import Tienda
-from .serializers import TiendaSerializer
+from .models import Tienda, PlanSuscripcion, UsoMensualTienda
+from .serializers import TiendaSerializer, PlanSuscripcionSerializer
 from django.contrib.auth import get_user_model
 from rest_framework.permissions import IsAuthenticated
 
 User = get_user_model()
+
 
 
 # ============================================
@@ -66,7 +67,7 @@ class CreateTienda(APIView):
             )
 
         data = request.data.copy()
-        # Si es admin_tienda y no es superuser, forzar que la tienda creada quede vinculada a él
+        # Si es admin_tienda y no es superuser, forzar que la tienda creada quede vinculada a ÃƒÂ©l
         # - Si crea sucursal (tienda_padre), debe ser su propia tienda
         # - Si crea tienda principal, asignarle como propietario si no viene
         if not user.is_superuser:
@@ -83,8 +84,8 @@ class CreateTienda(APIView):
                 # Tienda principal: auto-asignar propietario si no viene
                 if not data.get("propietario"):
                     data["propietario"] = user.id  # type: ignore
-            # Admin no puede elegir otro propietario ni serie libremente (se respeta UpdateTienda restriction, pero aquí también)
-            # Permitir serie, pero será validada por serializer
+            # Admin no puede elegir otro propietario ni serie libremente (se respeta UpdateTienda restriction, pero aquÃƒÂ­ tambiÃƒÂ©n)
+            # Permitir serie, pero serÃƒÂ¡ validada por serializer
 
         serializer = TiendaSerializer(data=data, context={"request": request})
         if serializer.is_valid():
@@ -94,7 +95,7 @@ class CreateTienda(APIView):
                 tienda.propietario = tienda.tienda_padre.propietario
                 tienda.save(update_fields=["propietario"])
                 serializer = TiendaSerializer(tienda, context={"request": request})
-            # Asegurar propietario para admin que crea tienda principal sin propietario explícito
+            # Asegurar propietario para admin que crea tienda principal sin propietario explÃƒÂ­cito
             elif not user.is_superuser and tienda.propietario is None and tienda.tienda_padre is None:
                 tienda.propietario = user  # type: ignore
                 tienda.save(update_fields=["propietario"])
@@ -227,7 +228,7 @@ class UpdateTiendaStyles(APIView):
                 continue
             if not isinstance(valor, str) or len(valor) > 100:
                 return Response(
-                    {"error": f"'{nombre}' debe ser string de máximo 100 caracteres."},
+                    {"error": f"'{nombre}' debe ser string de mÃƒÂ¡ximo 100 caracteres."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             setattr(tienda, nombre, valor)
@@ -261,3 +262,152 @@ class GetMiTiendaView(APIView):
             TiendaSerializer(sucursales, many=True, context={"request": request}).data,
             status=status.HTTP_200_OK
         )
+
+
+class GetPlanosYSuscripcionTienda(APIView):
+    """Ver plan actual y estado de uso de una tienda"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, tienda_id):
+        tienda = get_object_or_404(Tienda, id=tienda_id, is_deleted=False)
+
+        # Verificar permisos: solo superuser o admin de la tienda
+        user = request.user
+        if user.is_superuser:
+            pass
+        elif user.tienda and user.tienda.id == tienda.id:
+            pass
+        else:
+            return Response(
+                {"error": "No tienes permisos para ver esta informaciÃ³n."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Obtener plan actual de la tienda (solo uno)
+        plan_actual = tienda.plan
+
+        # Obtener uso mensual actual
+        from datetime import date
+        hoy = date.today()
+        mes_actual = hoy.replace(day=1)
+        uso_actual = UsoMensualTienda.objects.filter(tienda=tienda, mes=mes_actual).first()
+
+        # Preparar datos
+        plan_actual_data = None
+        if plan_actual:
+            plan_actual_data = {
+                "id": plan_actual.id,
+                "nombre_plan": plan_actual.nombre_plan,
+                "descripcion": plan_actual.descripcion,
+                "lista_descripcion": plan_actual.lista_descripcion or [],
+                "limite_boletas": plan_actual.limite_boletas,
+                "limite_facturas": plan_actual.limite_facturas,
+                "limite_personal": plan_actual.limite_personal,
+                "precio_mensual": str(plan_actual.precio_mensual),
+                "precio_anual": str(plan_actual.precio_anual),
+                "moneda": plan_actual.moneda,
+                "periodo_facturacion": plan_actual.periodo_facturacion,
+                "activo": plan_actual.activo,
+            }
+
+        uso_mensual_data = None
+        if uso_actual:
+            uso_mensual_data = {
+                "boletas_emitidas": uso_actual.boletas_emitidas,
+                "facturas_emitidas": uso_actual.facturas_emitidas,
+                "mes": uso_actual.mes.iso_format(),
+            }
+
+        response_data = {
+            "plan_actual": plan_actual_data,
+            "uso_mensual": uso_mensual_data,
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+
+class CreatePlanSuscripcion(APIView):
+    """Superuser: crear un nuevo plan de suscripciÃ³n"""
+    permission_classes = [IsAuthenticated, IsSuperUser]
+
+    def post(self, request):
+        serializer = PlanSuscripcionSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ListPlanSuscripcion(APIView):
+    """Listar todos los planes disponibles (para selector/assign)"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        planes = PlanSuscripcion.objects.all().order_by('precio_mensual')
+        serializer = PlanSuscripcionSerializer(planes, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ChangePlanTienda(APIView):
+    """Superuser o admin_tienda: cambiar el plan de una tienda"""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, tienda_id):
+        tienda = get_object_or_404(Tienda, id=tienda_id, is_deleted=False)
+
+        # Verificar permisos
+        user = request.user
+        if user.is_superuser:
+            pass
+        elif user.tienda and user.tienda.id == tienda.id:
+            pass
+        else:
+            return Response(
+                {"error": "No tienes permisos para cambiar el plan de esta tienda."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        plan_id = request.data.get('plan_id')
+        if not plan_id:
+            return Response(
+                {"error": "El campo 'plan_id' es requerido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            nuevo_plan = PlanSuscripcion.objects.get(id=plan_id)
+        except PlanSuscripcion.DoesNotExist:
+            return Response(
+                {"error": "El plan especificado no existe."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Asignar el nuevo plan a la tienda
+        tienda.plan = nuevo_plan
+        tienda.save()
+
+        # Retornar la info actualizada de la tienda con su nuevo plan
+        from .serializers import TiendaSerializer, PlanSuscripcionSerializer
+        serializer = TiendaSerializer(tienda, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class UpdatePlanSuscripcion(APIView):
+    """Superuser: actualizar cualquier campo de un plan existente"""
+    permission_classes = [IsAuthenticated, IsSuperUser]
+
+    def patch(self, request, plan_id):
+        plan = get_object_or_404(PlanSuscripcion, id=plan_id)
+        serializer = PlanSuscripcionSerializer(plan, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, plan_id):
+        plan = get_object_or_404(PlanSuscripcion, id=plan_id)
+        serializer = PlanSuscripcionSerializer(plan, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
