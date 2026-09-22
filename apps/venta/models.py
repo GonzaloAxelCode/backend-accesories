@@ -16,6 +16,11 @@ class Venta(models.Model):
     fecha_cancelacion = models.DateTimeField(null=True, blank=True)
     metodo_pago = models.CharField(max_length=100,null=True)
     estado = models.CharField(max_length=100, default='Completada')
+    tipo_venta = models.CharField(
+        max_length=20,
+        choices=[('PEDIDO', 'Pedido'), ('PRESENCIAL', 'Presencial')],
+        default='PRESENCIAL',
+    )
    
     activo = models.BooleanField(default=True)
     tipo_comprobante = models.CharField(max_length=50, choices=[('BOLETA', 'Boleta'), ('FACTURA', 'Factura')],null=True)

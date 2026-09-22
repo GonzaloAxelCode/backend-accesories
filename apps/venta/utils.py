@@ -856,7 +856,10 @@ class SunatService:
         php_url = SunatService.get_php_url(tipo_comprobante)
         try:
             print(f"\n[SUNAT] Enviando comprobante a: {php_url}")
-            print(f"[SUNAT] Payload: {json.dumps(comprobante_data, default=str, indent=2, ensure_ascii=False)}")
+            # Nunca loguear el bloque "emisor": lleva clave SOL y claves del
+            # certificado. Solo se registra un resumen sin secretos.
+            resumen = {k: v for k, v in comprobante_data.items() if k != "emisor"}
+            print(f"[SUNAT] Payload: {json.dumps(resumen, default=str, indent=2, ensure_ascii=False)}")
 
             response = requests.post(
                 php_url,

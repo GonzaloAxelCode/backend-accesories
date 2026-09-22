@@ -1,5 +1,5 @@
 from decimal import Decimal, InvalidOperation
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import ceil
 from zoneinfo import ZoneInfo
 
@@ -15,6 +15,81 @@ from rest_framework.pagination import PageNumberPagination
 
 from apps.inventario.models import Inventario
 from .models import Pedido, PedidoProducto
+
+
+def calcular_fechas_vencimiento(fecha_base):
+    """Vencimiento: 1 mes (30 días) desde la creación; eliminación: 3 días después."""
+    fecha_vencimiento = fecha_base + timedelta(days=Pedido.DIAS_VENCIMIENTO)
+    fecha_eliminacion = fecha_vencimiento + timedelta(
+        days=Pedido.DIAS_ELIMINACION_TRAS_VENCIMIENTO
+    )
+    return fecha_vencimiento, fecha_eliminacion
+
+
+def marcar_vencidos_tienda(tienda_id):
+    """Marca PENDIENTE -> VENCIDO cuando ya pasó su fecha_vencimiento."""
+    ahora = timezone.now()
+    Pedido.objects.filter(
+        tienda_id=tienda_id,
+        estado="PENDIENTE",
+        fecha_vencimiento__lte=ahora,
+    ).update(estado="VENCIDO")
+
+
+def purgar_vencidos_tienda(tienda_id):
+    """Eliminación permanente de VENCIDOS que pasaron su fecha_eliminacion."""
+    ahora = timezone.now()
+    Pedido.objects.filter(
+        tienda_id=tienda_id,
+        estado="VENCIDO",
+        fecha_eliminacion__lte=ahora,
+    ).delete()
+
+
+def refrescar_vencimiento_tienda(tienda_id):
+    """Purga eliminables y luego marca vencidos. Llamar al inicio de cada vista."""
+    purgar_vencidos_tienda(tienda_id)
+    marcar_vencidos_tienda(tienda_id)
+
+
+def pedido_esta_vencido(pedido):
+    """Chequeo en memoria para un pedido ya cargado (sin query extra)."""
+    if pedido.estado != "PENDIENTE":
+        return False
+    if not pedido.fecha_vencimiento:
+        return False
+    return pedido.fecha_vencimiento <= timezone.now()
+
+
+def aplicar_vencimiento_pedido(pedido):
+    """Aplica vencimiento/purga a un pedido ya cargado.
+
+    Retorna "eliminado" si superó su fecha_eliminacion (lo borra
+    permanentemente), "vencido" si recién pasó a VENCIDO o ya lo estaba,
+    u "ok" si sigue vigente.
+    """
+    ahora = timezone.now()
+    if pedido.estado == "PENDIENTE" and pedido_esta_vencido(pedido):
+        pedido.estado = "VENCIDO"
+        pedido.save(update_fields=["estado"])
+    if pedido.estado == "VENCIDO":
+        if pedido.fecha_eliminacion and pedido.fecha_eliminacion <= ahora:
+            pedido.delete()
+            return "eliminado"
+        return "vencido"
+    return "ok"
+
+
+def _imagen_producto_url(request, producto):
+    """URL absoluta de la imagen del producto (None si no tiene)."""
+    try:
+        if producto and getattr(producto, "imagen", None):
+            url = producto.imagen.url
+            if url:
+                return request.build_absolute_uri(url)
+    except Exception:
+        pass
+    return None
 
 
 class PedidoPagination(PageNumberPagination):
@@ -66,10 +141,14 @@ class CrearPedidoView(APIView):
             # Dirección de envío (si es delivery)
             direccion_envio = data.get("direccion_envio", "")
             referencia_ubicacion = data.get("referencia_ubicacion", "")
+            plus_code = data.get("plus_code", "") or ""
             costo_envio = Decimal(str(data.get("costo_envio", 0)))
 
             # Referencia externa
             referencia_externa = data.get("referencia_externa", "")
+
+            # Vencimiento automático: 1 mes desde la creación, eliminación 3 días después
+            fecha_vencimiento, fecha_eliminacion = calcular_fechas_vencimiento(fecha_hora)
 
             productos_registrados = []
             subtotal = Decimal("0.00")
@@ -85,9 +164,10 @@ class CrearPedidoView(APIView):
                     tipo_pedido=tipo_pedido,
                     canal_venta=canal_venta,
                     prioridad=prioridad,
-                    metodo_pago=data.get("metodoPago"),
                     fecha_hora=fecha_hora,
-                    estado="COTIZADO",
+                    fecha_vencimiento=fecha_vencimiento,
+                    fecha_eliminacion=fecha_eliminacion,
+                    estado="PENDIENTE",
                     observaciones=observaciones,
                     notas_internas=notas_internas,
                     tipo_documento_cliente=cliente_data.get("tipo_documento", "1"),
@@ -97,6 +177,7 @@ class CrearPedidoView(APIView):
                     telefono_cliente=cliente_data.get("telefono_cliente"),
                     direccion_envio=direccion_envio,
                     referencia_ubicacion=referencia_ubicacion,
+                    plus_code=plus_code,
                     costo_envio=costo_envio,
                     referencia_externa=referencia_externa,
                 )
@@ -204,7 +285,7 @@ class CrearPedidoView(APIView):
                     "canal_venta": pedido.canal_venta,
                     "prioridad": pedido.prioridad,
                     "estado": pedido.estado,
-                    "metodo_pago": pedido.metodo_pago,
+                    "venta_id": pedido.venta_id,
                     "subtotal": float(pedido.subtotal),
                     "gravado_total": float(pedido.gravado_total),
                     "igv_total": float(pedido.igv_total),
@@ -213,7 +294,10 @@ class CrearPedidoView(APIView):
                     "nombre_cliente": pedido.nombre_cliente,
                     "telefono_cliente": pedido.telefono_cliente,
                     "direccion_envio": pedido.direccion_envio,
+                    "plus_code": pedido.plus_code,
                     "fecha_hora": pedido.fecha_hora.isoformat() if pedido.fecha_hora else None,
+                    "fecha_vencimiento": pedido.fecha_vencimiento.isoformat() if pedido.fecha_vencimiento else None,
+                    "fecha_eliminacion": pedido.fecha_eliminacion.isoformat() if pedido.fecha_eliminacion else None,
                     "observaciones": pedido.observaciones,
                     "productos": productos_registrados,
                 }
@@ -245,6 +329,9 @@ class ListarPedidosView(APIView):
         tienda_id = request.user.tienda
         query = request.data.get('query', {})
 
+        # Vencimiento automático + purga permanente antes de listar
+        refrescar_vencimiento_tienda(tienda_id)
+
         pedidos = Pedido.objects.filter(tienda_id=tienda_id)
 
         from_date = query.get('from_date')
@@ -261,6 +348,29 @@ class ListarPedidosView(APIView):
                 timezone=tz
             )
             pedidos = pedidos.filter(fecha_hora__range=(from_date_obj, to_date_obj))
+
+        def _rango_fechas(desde, hasta):
+            """Convierte [año, mes_0_indexed, día] a datetimes día completo."""
+            tz = timezone.get_current_timezone()
+            desde_obj = make_aware(
+                datetime(year=desde[0], month=desde[1] + 1, day=desde[2], hour=0, minute=0, second=0),
+                timezone=tz
+            )
+            hasta_obj = make_aware(
+                datetime(year=hasta[0], month=hasta[1] + 1, day=hasta[2], hour=23, minute=59, second=59),
+                timezone=tz
+            )
+            return desde_obj, hasta_obj
+
+        vencimiento_from = query.get('vencimiento_from')
+        vencimiento_to = query.get('vencimiento_to')
+        if vencimiento_from and vencimiento_to:
+            pedidos = pedidos.filter(fecha_vencimiento__range=_rango_fechas(vencimiento_from, vencimiento_to))
+
+        eliminacion_from = query.get('eliminacion_from')
+        eliminacion_to = query.get('eliminacion_to')
+        if eliminacion_from and eliminacion_to:
+            pedidos = pedidos.filter(fecha_eliminacion__range=_rango_fechas(eliminacion_from, eliminacion_to))
 
         numero_pedido = query.get('numero_pedido')
         metodo_pago = query.get('metodo_pago')
@@ -314,7 +424,7 @@ class ListarPedidosView(APIView):
 
         pedidos_json = []
         for pedido in result_page:
-            productos = PedidoProducto.objects.filter(pedido=pedido)
+            productos = PedidoProducto.objects.filter(pedido=pedido).select_related("producto")
             productos_json = [
                 {
                     "id": p.id,
@@ -328,6 +438,7 @@ class ListarPedidosView(APIView):
                     "precio_unitario": float(p.precio_unitario),
                     "costo_original": float(p.costo_original),
                     "descuento": float(p.descuento),
+                    "imagen": _imagen_producto_url(request, p.producto),
                 }
                 for p in productos
             ]
@@ -345,12 +456,14 @@ class ListarPedidosView(APIView):
                 "numero_pedido": pedido.numero_pedido,
                 "usuario": pedido.usuario.id if pedido.usuario else None,
                 "tienda": pedido.tienda.id if pedido.tienda else None,
+                "venta_id": pedido.venta_id,
                 "tipo_pedido": pedido.tipo_pedido,
                 "canal_venta": pedido.canal_venta,
                 "prioridad": pedido.prioridad,
                 "fecha_hora": pedido.fecha_hora.isoformat(),
                 "fecha_realizacion": pedido.fecha_realizacion.isoformat() if pedido.fecha_realizacion else None,
                 "fecha_vencimiento": pedido.fecha_vencimiento.isoformat() if pedido.fecha_vencimiento else None,
+                "fecha_eliminacion": pedido.fecha_eliminacion.isoformat() if pedido.fecha_eliminacion else None,
                 "fecha_entrega_estimada": pedido.fecha_entrega_estimada.isoformat() if pedido.fecha_entrega_estimada else None,
                 "fecha_cancelacion": pedido.fecha_cancelacion.isoformat() if pedido.fecha_cancelacion else None,
                 "metodo_pago": pedido.metodo_pago,
@@ -371,6 +484,7 @@ class ListarPedidosView(APIView):
                 "telefono_cliente": pedido.telefono_cliente,
                 "direccion_envio": pedido.direccion_envio,
                 "referencia_ubicacion": pedido.referencia_ubicacion,
+                "plus_code": pedido.plus_code,
                 "observaciones": pedido.observaciones,
                 "notas_internas": pedido.notas_internas,
                 "motivo_cancelacion": pedido.motivo_cancelacion,
@@ -407,7 +521,19 @@ class ActualizarPedidoView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            if pedido.estado in ['CANCELADO', 'ENTREGADO']:
+            if aplicar_vencimiento_pedido(pedido) == "eliminado":
+                return Response(
+                    {"error": "El pedido vencido fue eliminado permanentemente"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if pedido.estado == 'VENCIDO':
+                return Response(
+                    {"error": "No se puede editar un pedido vencido. Solo puede eliminarse"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if pedido.estado in ['CANCELADO', 'COMPLETADO']:
                 return Response(
                     {"error": f"No se puede editar un pedido {pedido.estado.lower()}"},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -444,8 +570,6 @@ class ActualizarPedidoView(APIView):
                 pedido.monto_adelanto = Decimal(str(data['monto_adelanto']))
             if 'metodo_pago_adelanto' in data:
                 pedido.metodo_pago_adelanto = data['metodo_pago_adelanto']
-            if 'fecha_vencimiento' in data:
-                pedido.fecha_vencimiento = data['fecha_vencimiento']
             if 'fecha_entrega_estimada' in data:
                 pedido.fecha_entrega_estimada = data['fecha_entrega_estimada']
             if 'observaciones' in data:
@@ -456,10 +580,26 @@ class ActualizarPedidoView(APIView):
                 pedido.direccion_envio = data['direccion_envio']
             if 'referencia_ubicacion' in data:
                 pedido.referencia_ubicacion = data['referencia_ubicacion']
+            if 'plus_code' in data:
+                pedido.plus_code = data['plus_code']
             if 'costo_envio' in data:
                 pedido.costo_envio = Decimal(str(data['costo_envio']))
             if 'referencia_externa' in data:
                 pedido.referencia_externa = data['referencia_externa']
+            if 'venta_id' in data:
+                venta_id = data['venta_id']
+                if venta_id in (None, ""):
+                    pedido.venta = None
+                else:
+                    from apps.venta.models import Venta
+                    try:
+                        venta = Venta.objects.get(id=venta_id, tienda_id=tienda_id)
+                    except (Venta.DoesNotExist, ValueError, TypeError):
+                        return Response(
+                            {"error": "Venta no encontrada"},
+                            status=status.HTTP_404_NOT_FOUND,
+                        )
+                    pedido.venta = venta
 
             # Actualizar productos
             productos_data = data.get('productos', None)
@@ -571,7 +711,7 @@ class ActualizarPedidoView(APIView):
             pedido.save()
 
             # Preparar respuesta con productos actualizados
-            productos_finales = PedidoProducto.objects.filter(pedido=pedido)
+            productos_finales = PedidoProducto.objects.filter(pedido=pedido).select_related("producto")
             productos_json = [
                 {
                     "id": p.id,
@@ -581,6 +721,7 @@ class ActualizarPedidoView(APIView):
                     "valor_unitario": float(p.valor_unitario),
                     "precio_unitario": float(p.precio_unitario),
                     "descuento": float(p.descuento),
+                    "imagen": _imagen_producto_url(request, p.producto),
                 }
                 for p in productos_finales
             ]
@@ -591,6 +732,7 @@ class ActualizarPedidoView(APIView):
                     "id": pedido.id,
                     "numero_pedido": pedido.numero_pedido,
                     "estado": pedido.estado,
+                    "venta_id": pedido.venta_id,
                     "tipo_pedido": pedido.tipo_pedido,
                     "canal_venta": pedido.canal_venta,
                     "prioridad": pedido.prioridad,
@@ -605,6 +747,9 @@ class ActualizarPedidoView(APIView):
                     "numero_documento_cliente": pedido.numero_documento_cliente,
                     "telefono_cliente": pedido.telefono_cliente,
                     "direccion_envio": pedido.direccion_envio,
+                    "plus_code": pedido.plus_code,
+                    "fecha_vencimiento": pedido.fecha_vencimiento.isoformat() if pedido.fecha_vencimiento else None,
+                    "fecha_eliminacion": pedido.fecha_eliminacion.isoformat() if pedido.fecha_eliminacion else None,
                     "observaciones": pedido.observaciones,
                     "productos": productos_json,
                 }
@@ -632,9 +777,27 @@ class CancelarPedidoView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
+            if aplicar_vencimiento_pedido(pedido) == "eliminado":
+                return Response(
+                    {"error": "El pedido vencido fue eliminado permanentemente"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
             if pedido.estado == "CANCELADO":
                 return Response(
                     {"error": "El pedido ya está cancelado"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if pedido.estado == "COMPLETADO":
+                return Response(
+                    {"error": "No se puede cancelar un pedido completado"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if pedido.estado == "VENCIDO":
+                return Response(
+                    {"error": "No se puede cancelar un pedido vencido. Solo puede eliminarse"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -679,7 +842,13 @@ class DetallePedidoView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            productos = PedidoProducto.objects.filter(pedido=pedido)
+            if aplicar_vencimiento_pedido(pedido) == "eliminado":
+                return Response(
+                    {"error": "El pedido vencido fue eliminado permanentemente"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            productos = PedidoProducto.objects.filter(pedido=pedido).select_related("producto")
             productos_json = [
                 {
                     "id": p.id,
@@ -693,6 +862,7 @@ class DetallePedidoView(APIView):
                     "precio_unitario": float(p.precio_unitario),
                     "costo_original": float(p.costo_original),
                     "descuento": float(p.descuento),
+                    "imagen": _imagen_producto_url(request, p.producto),
                 }
                 for p in productos
             ]
@@ -710,12 +880,14 @@ class DetallePedidoView(APIView):
                 "numero_pedido": pedido.numero_pedido,
                 "usuario": pedido.usuario.id if pedido.usuario else None,
                 "tienda": pedido.tienda.id if pedido.tienda else None,
+                "venta_id": pedido.venta_id,
                 "tipo_pedido": pedido.tipo_pedido,
                 "canal_venta": pedido.canal_venta,
                 "prioridad": pedido.prioridad,
                 "fecha_hora": pedido.fecha_hora.isoformat(),
                 "fecha_realizacion": pedido.fecha_realizacion.isoformat() if pedido.fecha_realizacion else None,
                 "fecha_vencimiento": pedido.fecha_vencimiento.isoformat() if pedido.fecha_vencimiento else None,
+                "fecha_eliminacion": pedido.fecha_eliminacion.isoformat() if pedido.fecha_eliminacion else None,
                 "fecha_entrega_estimada": pedido.fecha_entrega_estimada.isoformat() if pedido.fecha_entrega_estimada else None,
                 "fecha_cancelacion": pedido.fecha_cancelacion.isoformat() if pedido.fecha_cancelacion else None,
                 "metodo_pago": pedido.metodo_pago,
@@ -736,6 +908,7 @@ class DetallePedidoView(APIView):
                 "telefono_cliente": pedido.telefono_cliente,
                 "direccion_envio": pedido.direccion_envio,
                 "referencia_ubicacion": pedido.referencia_ubicacion,
+                "plus_code": pedido.plus_code,
                 "observaciones": pedido.observaciones,
                 "notas_internas": pedido.notas_internas,
                 "motivo_cancelacion": pedido.motivo_cancelacion,
@@ -756,7 +929,7 @@ class DetallePedidoView(APIView):
 class ConfirmarEstadoPedidoView(APIView):
     permission_classes = [IsAuthenticated]
 
-    ESTADOS_VALIDOS = ['COTIZADO', 'PENDIENTE', 'CONFIRMADO', 'EN_PREPARACION', 'LISTO', 'ENTREGADO']
+    ESTADOS_VALIDOS = ['PENDIENTE', 'COMPLETADO']
 
     def put(self, request, pedido_id):
         try:
@@ -768,6 +941,18 @@ class ConfirmarEstadoPedidoView(APIView):
                 return Response(
                     {"error": "Pedido no encontrado"},
                     status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if aplicar_vencimiento_pedido(pedido) == "eliminado":
+                return Response(
+                    {"error": "El pedido vencido fue eliminado permanentemente"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if pedido.estado == 'VENCIDO':
+                return Response(
+                    {"error": "No se puede cambiar el estado de un pedido vencido. Solo puede eliminarse"},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
             nuevo_estado = request.data.get('estado')
@@ -790,9 +975,9 @@ class ConfirmarEstadoPedidoView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if pedido.estado == 'ENTREGADO':
+            if pedido.estado == 'COMPLETADO':
                 return Response(
-                    {"error": "No se puede cambiar el estado de un pedido ya entregado"},
+                    {"error": "No se puede cambiar el estado de un pedido ya completado"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -820,7 +1005,7 @@ class ConfirmarEstadoPedidoView(APIView):
 class MarcarPedidoPagadoView(APIView):
     permission_classes = [IsAuthenticated]
 
-    ESTADOS_VALIDOS = ['COTIZADO', 'PENDIENTE', 'CONFIRMADO', 'EN_PREPARACION', 'LISTO', 'ENTREGADO', 'CANCELADO']
+    ESTADOS_VALIDOS = ['PENDIENTE', 'COMPLETADO', 'CANCELADO']
     ESTADOS_PAGO_VALIDOS = ['PENDIENTE', 'PARCIAL', 'PAGADO']
     PRIORIDADES_VALIDAS = ['NORMAL', 'URGENTE']
 
@@ -842,7 +1027,19 @@ class MarcarPedidoPagadoView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            if pedido.estado in ('CANCELADO', 'ENTREGADO'):
+            if aplicar_vencimiento_pedido(pedido) == "eliminado":
+                return Response(
+                    {"error": "El pedido vencido fue eliminado permanentemente"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if pedido.estado == 'VENCIDO':
+                return Response(
+                    {"error": "No se puede modificar un pedido vencido. Solo puede eliminarse"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if pedido.estado in ('CANCELADO', 'COMPLETADO'):
                 if 'estado' in request.data:
                     valor_estado = request.data.get('estado')
                     if valor_estado not in (None, '') and valor_estado != pedido.estado:

@@ -259,6 +259,7 @@ class GetCurrentUserAPIView(APIView):
 class CreateUserInTiendaAPIView(APIView):
     permission_classes = [IsAuthenticated, IsAdminTienda]
 
+    @transaction.atomic
     def post(self, request, tienda_id):
         # Verificar permiso admin_tienda si no es superuser
         if not request.user.is_superuser:
@@ -283,9 +284,43 @@ class CreateUserInTiendaAPIView(APIView):
                 )
         tienda = get_object_or_404(Tienda, id=tienda_id)
 
+        from apps.tienda.utils import renovar_si_vencido, get_estado_limites
+        renovar_si_vencido(tienda)
+        # Bloqueo por límite de personal del plan (superuser bypass)
+        if not request.user.is_superuser:
+            estado = get_estado_limites(tienda)
+            if estado["excede_personal"]:
+                return Response(
+                    {
+                        "error": f'Límite de personal del plan alcanzado ({estado["num_personal"]}/{estado["limite_personal"]}).',
+                        "uso": estado["num_personal"],
+                        "limite": estado["limite_personal"],
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         # Clonar los datos y forzar la tienda
         data = request.data.copy()
         data["tienda"] = tienda.id  # type: ignore
+
+        # `is_propietario` (bool o "true"/"false" por form-data): si es true,
+        # el nuevo usuario pasa a ser propietario de la tienda (rol
+        # admin_tienda de su misma tienda). No es campo del modelo: se retira
+        # antes de validar el serializer.
+        es_propietario_raw = data.pop("is_propietario", False)
+        if isinstance(es_propietario_raw, list):
+            es_propietario_raw = es_propietario_raw[-1] if es_propietario_raw else False
+        es_propietario = (
+            es_propietario_raw is True
+            or (isinstance(es_propietario_raw, str) and es_propietario_raw.strip().lower() == "true")
+            or (isinstance(es_propietario_raw, int) and not isinstance(es_propietario_raw, bool) and es_propietario_raw == 1)
+        )
+        # Validar ANTES de crear: la sucursal hereda el propietario del padre.
+        if es_propietario and tienda.tienda_padre_id:
+            return Response(
+                {"error": "No puedes asignar propietario a una sucursal: hereda el propietario de la tienda padre."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         serializer = UserAccountSerializer(data=data)
         if not serializer.is_valid():
@@ -295,6 +330,13 @@ class CreateUserInTiendaAPIView(APIView):
         user = serializer.save()
         if isinstance(user, list):  # ✅ En caso de que devuelva lista
             user = user[0]
+
+        # Nuevo dueño de la tienda (ya validado arriba que es principal).
+        # El usuario ya quedó con tienda = esta tienda, así que su rol
+        # pasa a ser admin_tienda.
+        if es_propietario:
+            tienda.propietario = user
+            tienda.save(update_fields=["propietario"])
 
         # 🔹 Definir los permisos (igual que en GetCurrentUserAPIView)
         ALL_PERMISSIONS = [
@@ -339,6 +381,16 @@ class CreateUserInTiendaAPIView(APIView):
         }
 
         # 🔹 Armar la respuesta igual que en GetCurrentUserAPIView
+        # (se usa `tienda` —ya actualizada si se asignó dueño— porque
+        # user.tienda en memoria puede estar desactualizada).
+        if user.is_superuser:
+            rol_nuevo = "superuser"
+        elif tienda.propietario_id is not None and tienda.propietario_id == user.id:  # type: ignore
+            rol_nuevo = "admin_tienda"
+        elif user.es_empleado:
+            rol_nuevo = "empleado"
+        else:
+            rol_nuevo = "usuario"
         response_data = {
             'id': user.id,
             'username': user.username,
@@ -356,6 +408,8 @@ class CreateUserInTiendaAPIView(APIView):
             'all_permissions_meta': ALL_PERMISSIONS,
             'tienda': user.tienda.id if user.tienda else None,
             'tienda_nombre': user.tienda.nombre if user.tienda else None,
+            'rol': rol_nuevo,
+            'es_propietario': rol_nuevo == "admin_tienda",
         }
 
         return Response(
@@ -582,9 +636,10 @@ class UpdateUserBasicDataAPIView(APIView):
         last_name = request.data.get("last_name")
 
         if username is not None:
-            if not str(username).strip():
+            if not str(username):
                 return Response({"error": "username no puede estar vacío."}, status=status.HTTP_400_BAD_REQUEST)
-            user.username = str(username).strip().lower()
+            # Sensible a mayúsculas: se guarda exacto, sin lower/strip.
+            user.username = str(username)
         if first_name is not None:
             user.first_name = first_name
         if last_name is not None:

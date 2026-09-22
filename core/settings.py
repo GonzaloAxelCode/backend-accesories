@@ -101,6 +101,7 @@ INSTALLED_APPS = [
                     
                     "apps.pedidos",
                     "apps.compras",
+                    "apps.guia_remision",
     "ckeditor",
     "ckeditor_uploader",
     'django.contrib.sites',
@@ -188,7 +189,6 @@ REST_FRAMEWORK = {
 
 AUTHENTICATION_BACKENDS = (
     'django.contrib.auth.backends.ModelBackend',
-    'allauth.account.auth_backends.AuthenticationBackend',
 )
 
 

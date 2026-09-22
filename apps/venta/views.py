@@ -34,6 +34,166 @@ class VentaPagination(PageNumberPagination):
 
 User = get_user_model()
 
+def build_venta_detalle_json(venta, request):
+    """JSON detallado de una venta (mismo formato que sales/search/)."""
+    comprobante_venta = ComprobanteElectronico.objects.filter(venta=venta).first()
+    comprobante_json = None
+
+    if comprobante_venta:
+        comprobante_json = {
+            "tipo_comprobante": comprobante_venta.tipo_comprobante,
+            "serie": comprobante_venta.serie,
+            "correlativo": comprobante_venta.correlativo,
+            "moneda": comprobante_venta.moneda,
+            "gravadas": float(comprobante_venta.gravadas) if comprobante_venta.gravadas else None,
+            "igv": float(comprobante_venta.igv) if comprobante_venta.igv else None,
+            "valorVenta": float(comprobante_venta.valorVenta) if comprobante_venta.valorVenta else None,
+            "sub_total": float(comprobante_venta.sub_total) if comprobante_venta.sub_total else None,
+            "total": float(comprobante_venta.total) if comprobante_venta.total else None,
+            "leyenda": comprobante_venta.leyenda,
+            "tipo_documento_cliente": comprobante_venta.tipo_documento_cliente,
+            "numero_documento_cliente": comprobante_venta.numero_documento_cliente,
+            "nombre_cliente": comprobante_venta.nombre_cliente,
+            "estado_sunat": comprobante_venta.estado_sunat,
+            "xml_url": comprobante_venta.xml_url,
+            "pdf_url": comprobante_venta.pdf_url,
+            "cdr_url": comprobante_venta.cdr_url,
+            "ticket_url": comprobante_venta.ticket_url,
+            "items": comprobante_venta.items,
+        }
+
+    # Lectura desde productos_json (ya no VentaProducto) - mantiene compatibilidad de keys
+    from apps.venta.utils import _parse_productos_json, VentaService, calcular_total_venta
+
+    raw_productos = _parse_productos_json(venta.productos_json)
+    # Enriquecer con is_deleted/is_updated e imagen si falta
+    try:
+        raw_productos = VentaService.enrich_productos_json(raw_productos, request, None, venta)
+    except Exception:
+        pass
+    productos_json = []
+    for idx, item in enumerate(raw_productos):
+        if not isinstance(item, dict):
+            continue
+        # Mapear a formato esperado por frontend (compat con VentaProducto)
+        try:
+            cantidad = int(item.get("cantidad", 0) or 0)
+        except Exception:
+            try:
+                cantidad = int(float(str(item.get("cantidad", 0))))
+            except Exception:
+                cantidad = 0
+        # valores con fallback para compatibilidad
+        def _f(v, d=0.0):
+            if v is None or v == "":
+                return d
+            try:
+                return float(v)
+            except Exception:
+                try:
+                    return float(str(v).replace(",", "."))
+                except Exception:
+                    return d
+        productos_json.append({
+            "id": item.get("producto_id") or idx,
+            "producto": item.get("producto_id"),
+            "producto_imagen": item.get("producto_imagen") or item.get("img_url") or item.get("imagen"),
+            "producto_nombre": item.get("producto_nombre") or item.get("nombre") or item.get("descripcion"),
+            "cantidad": cantidad,
+            "valor_unitario": _f(item.get("valor_unitario")),
+            "valor_venta": _f(item.get("valor_venta")),
+            "base_igv": _f(item.get("base_igv", item.get("valor_venta"))),
+            "porcentaje_igv": _f(item.get("porcentaje_igv", 18.0)),
+            "igv": _f(item.get("igv")),
+            "tipo_afectacion_igv": item.get("tipo_afectacion_igv", "10"),
+            "total_impuestos": _f(item.get("total_impuestos", item.get("igv"))),
+            "precio_unitario": _f(item.get("precio_unitario", item.get("costo_original"))),
+            "descuento": _f(item.get("descuento")),
+            "costo_original": _f(item.get("costo_original", item.get("precio_venta"))),
+            "sku": item.get("sku"),
+            "is_deleted": item.get("is_deleted", False),
+            "is_updated": item.get("is_updated", False),
+        })
+
+    nota_credito = getattr(venta, "nota_credito", None)
+    nota_credito_json = None
+    if nota_credito:
+        nota_credito_json = {
+            "id": nota_credito.id,
+            "serie": nota_credito.serie,
+            "correlativo": nota_credito.correlativo,
+            "tipo_comprobante_modifica": nota_credito.tipo_comprobante_modifica,
+            "serie_modifica": nota_credito.serie_modifica,
+            "correlativo_modifica": nota_credito.correlativo_modifica,
+            "tipo_motivo": nota_credito.tipo_motivo,
+            "motivo": nota_credito.motivo,
+            "moneda": nota_credito.moneda,
+            "total": float(nota_credito.total),
+            "estado_sunat": nota_credito.estado_sunat,
+            "xml_url": nota_credito.xml_url,
+            "pdf_url": nota_credito.pdf_url,
+            "cdr_url": nota_credito.cdr_url,
+            "fecha_emision": nota_credito.fecha_emision.isoformat(),
+        }
+
+    return {
+        "id": venta.id,
+        "usuario": venta.usuario.id if venta.usuario else None,
+        "tienda": venta.tienda.id if venta.tienda else None,
+        "fecha_hora": venta.fecha_hora.isoformat(),
+        "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
+        "fecha_cancelacion": venta.fecha_cancelacion.isoformat() if venta.fecha_cancelacion else None,
+        "metodo_pago": venta.metodo_pago,
+        "estado": venta.estado,
+        "activo": venta.activo,
+        "tipo_comprobante": venta.tipo_comprobante,
+        "tipo_venta": venta.tipo_venta,
+        "productos": productos_json,
+        "total": calcular_total_venta(venta),
+        "subtotal": float(venta.subtotal) if venta.subtotal is not None else None,
+        "gravado_total": float(venta.gravado_total) if venta.gravado_total is not None else None,
+        "igv_total": float(venta.igv_total) if venta.igv_total is not None else None,
+        "productos_json": json.dumps(venta.productos_json, indent=4),
+        "comprobante": comprobante_json,
+        "comprobante_nota_credito": nota_credito_json,
+        "tipo_documento_cliente": venta.tipo_documento_cliente,
+        "numero_documento_cliente": venta.numero_documento_cliente,
+        "nombre_cliente": venta.nombre_cliente,
+        "email_cliente": venta.email_cliente,
+        "telefono_cliente": venta.telefono_cliente,
+        "direccion_cliente": venta.direccion_cliente,
+    }
+
+
+class DetailSaleView(APIView):
+    """Devuelve una sola venta por id con el JSON detallado (igual que sales/search/)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, venta_id):
+        try:
+            tienda = request.user.tienda
+            if not tienda:
+                return Response(
+                    {"error": "El usuario no tiene una tienda asignada"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                venta = Venta.objects.select_related("usuario", "tienda").get(
+                    id=venta_id, tienda=tienda
+                )
+            except (Venta.DoesNotExist, ValueError, TypeError):
+                return Response(
+                    {"error": "Venta no encontrada"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            return Response(build_venta_detalle_json(venta, request), status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {"error": "Error interno del servidor"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
 class CreateSaleView(APIView):
     permission_classes = [IsAuthenticated, CanMakeSalePermission]
 
@@ -42,6 +202,27 @@ class CreateSaleView(APIView):
             data = request.data
             tienda = request.user.tienda
             usuario = request.user
+            if tienda is not None:
+                from apps.tienda.utils import renovar_si_vencido, get_estado_limites
+                renovar_si_vencido(tienda)
+                # Bloqueo por límite del plan (superuser bypass para soporte)
+                if not usuario.is_superuser:
+                    estado = get_estado_limites(tienda)
+                    es_factura = (data.get("tipoComprobante") or "").lower() == "factura"
+                    limite = estado["limite_facturas"] if es_factura else estado["limite_boletas"]
+                    excede = estado["excede_facturas"] if es_factura else estado["excede_boletas"]
+                    if excede:
+                        tipo_nombre = "facturas" if es_factura else "boletas"
+                        uso = estado["facturas_emitidas"] if es_factura else estado["boletas_emitidas"]
+                        return Response(
+                            {
+                                "error": f"Límite mensual del plan alcanzado ({uso}/{limite} {tipo_nombre}).",
+                                "tipo": tipo_nombre,
+                                "uso": uso,
+                                "limite": limite,
+                            },
+                            status=status.HTTP_403_FORBIDDEN,
+                        )
             cliente_data = ClienteService.resolve_cliente(data.get("cliente"), tienda)
 
             fecha_hora = timezone.now()
@@ -54,12 +235,45 @@ class CreateSaleView(APIView):
             igv_total = Decimal("0.00")
             total = Decimal("0.00")
 
+            is_pedido_raw = data.get("is_pedido", False)
+            if isinstance(is_pedido_raw, str):
+                is_pedido = is_pedido_raw.strip().lower() in ("true", "1", "t", "si", "sí", "pedido")
+            else:
+                is_pedido = bool(is_pedido_raw) if is_pedido_raw is not None else False
+
+            # Pedido origen (opcional): si la venta es de un pedido, al venderse
+            # correctamente el pedido se actualiza con la venta_id
+            pedido_obj = None
+            pedido_id = data.get("pedido_id")
+            if pedido_id not in (None, ""):
+                from apps.pedidos.models import Pedido
+                try:
+                    pedido_obj = Pedido.objects.get(id=pedido_id, tienda=tienda)
+                except (Pedido.DoesNotExist, ValueError, TypeError):
+                    return Response(
+                        {"error": "Pedido no encontrado"},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+                if pedido_obj.venta_id:
+                    return Response(
+                        {"error": "El pedido ya tiene una venta asociada"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if pedido_obj.estado in ("VENCIDO", "CANCELADO"):
+                    return Response(
+                        {"error": f"No se puede generar una venta de un pedido {pedido_obj.estado.lower()}"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                is_pedido = True
+            tipo_venta = "PEDIDO" if is_pedido else "PRESENCIAL"
+
             with transaction.atomic():
                 venta = Venta.objects.create(
                     usuario=usuario,
                     tienda=tienda,
                     metodo_pago=data["metodoPago"],
                     tipo_comprobante=data["tipoComprobante"],
+                    tipo_venta=tipo_venta,
                     fecha_hora=fecha_hora,
                     estado="PENDIENTE",
                     tipo_documento_cliente="6" if data["tipoComprobante"] == "Factura" else "1",
@@ -126,23 +340,38 @@ class CreateSaleView(APIView):
                     items=comprobante_data["items"],
                 )
 
-            # SUNAT fuera del atomic
-            try:
+                # SUNAT dentro de la transacción: si falla el envío o SUNAT
+                # rechaza el comprobante, se revierte TODO (venta, productos,
+                # comprobante y stock). No queda nada, ni siquiera PENDIENTE.
                 response_json = SunatService.send_to_sunat(
                     comprobante_data, data["tipoComprobante"]
                 )
-            except Exception as e:
-                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-            SunatService.process_sunat_response(response_json, comprobante, venta)
-            comprobante_json = SunatService.build_comprobante_response(comprobante, response_json)
+                SunatService.process_sunat_response(response_json, comprobante, venta)
+                comprobante_json = SunatService.build_comprobante_response(comprobante, response_json)
+
+                # Venta concretada (SUNAT aceptó): enlazar la venta al pedido
+                # (venta_id) y marcarlo COMPLETADO.
+                # Dentro de la transacción: si algo falla, se revierte todo.
+                if pedido_obj is not None:
+                    pedido_obj.venta = venta
+                    pedido_obj.estado = "COMPLETADO"
+                    pedido_obj.save(update_fields=["venta", "estado"])
+
+            # El bloque "emisor" lleva secretos SUNAT (clave SOL + claves del
+            # certificado): ya se envió al PHP server-side, jamás al frontend.
+            comprobante_data_publico = {
+                k: v for k, v in comprobante_data.items() if k != "emisor"
+            }
 
             venta_json = {
                 "id": venta.id,
                 "usuario": usuario.id,
                 "tienda": tienda.id,
+                "pedido_id": pedido_obj.id if pedido_obj is not None else None,
                 "metodo_pago": venta.metodo_pago,
                 "tipo_comprobante": venta.tipo_comprobante,
+                "tipo_venta": venta.tipo_venta,
                 "estado": venta.estado,
                 "activo": venta.activo,
                 "fecha_hora": venta.fecha_hora.isoformat(),
@@ -152,7 +381,7 @@ class CreateSaleView(APIView):
                 "total": float(total),
                 "productos_json": json.dumps(productos_registrados),
                 "productos": productos_registrados,
-                "comprobante_data": comprobante_data,
+                "comprobante_data": comprobante_data_publico,
                 "comprobante": comprobante_json,
             }
 
@@ -814,6 +1043,7 @@ class SearchSalesView(APIView):
 
         metodo_pago = query.get('metodo_pago')
         tipo_comprobante = query.get('tipo_comprobante')
+        tipo_venta = query.get('tipo_venta')
         nombre_cliente = query.get('nombre_cliente')
         numero_documento_cliente = query.get('numero_documento_cliente')
         numero_comprobante = query.get('numero_comprobante')
@@ -825,6 +1055,13 @@ class SearchSalesView(APIView):
             ventas = ventas.filter(comprobante__estado_sunat__icontains=estado_sunat, total__gt=0)
         if tipo_comprobante is not "":
             ventas = ventas.filter(tipo_comprobante__icontains=tipo_comprobante, total__gt=0)
+        if tipo_venta not in (None, ""):
+            if str(tipo_venta).strip().upper() not in ("PEDIDO", "PRESENCIAL"):
+                return Response(
+                    {"error": "tipo_venta inválido. Valores permitidos: PEDIDO, PRESENCIAL."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            ventas = ventas.filter(tipo_venta__iexact=str(tipo_venta).strip(), total__gt=0)
         if numero_documento_cliente is not "":
             ventas = ventas.filter(comprobante__numero_documento_cliente__icontains=numero_documento_cliente, total__gt=0)
         if numero_comprobante is not "":
@@ -840,136 +1077,10 @@ class SearchSalesView(APIView):
         next_page = page_number + 1 if page_number < total_pages else None
         previous_page = page_number - 1 if page_number > 1 else None
 
-        ventas_json = []
-        for venta in result_page:  # type: ignore[reportOptionalIterable]
-            comprobante_venta = ComprobanteElectronico.objects.filter(venta=venta).first()
-            comprobante_json = None
-
-            if comprobante_venta:
-                comprobante_json = {
-                    "tipo_comprobante": comprobante_venta.tipo_comprobante,
-                    "serie": comprobante_venta.serie,
-                    "correlativo": comprobante_venta.correlativo,
-                    "moneda": comprobante_venta.moneda,
-                    "gravadas": float(comprobante_venta.gravadas) if comprobante_venta.gravadas else None,
-                    "igv": float(comprobante_venta.igv) if comprobante_venta.igv else None,
-                    "valorVenta": float(comprobante_venta.valorVenta) if comprobante_venta.valorVenta else None,
-                    "sub_total": float(comprobante_venta.sub_total) if comprobante_venta.sub_total else None,
-                    "total": float(comprobante_venta.total) if comprobante_venta.total else None,
-                    "leyenda": comprobante_venta.leyenda,
-                    "tipo_documento_cliente": comprobante_venta.tipo_documento_cliente,
-                    "numero_documento_cliente": comprobante_venta.numero_documento_cliente,
-                    "nombre_cliente": comprobante_venta.nombre_cliente,
-                    "estado_sunat": comprobante_venta.estado_sunat,
-                    "xml_url": comprobante_venta.xml_url,
-                    "pdf_url": comprobante_venta.pdf_url,
-                    "cdr_url": comprobante_venta.cdr_url,
-                    "ticket_url": comprobante_venta.ticket_url,
-                    "items": comprobante_venta.items,
-                }
-
-            # Lectura desde productos_json (ya no VentaProducto) - mantiene compatibilidad de keys
-            from apps.venta.utils import _parse_productos_json, VentaService
-
-            raw_productos = _parse_productos_json(venta.productos_json)
-            # Enriquecer con is_deleted/is_updated e imagen si falta
-            try:
-                raw_productos = VentaService.enrich_productos_json(raw_productos, request, None, venta)
-            except Exception:
-                pass
-            productos_json = []
-            for idx, item in enumerate(raw_productos):
-                if not isinstance(item, dict):
-                    continue
-                # Mapear a formato esperado por frontend (compat con VentaProducto)
-                try:
-                    cantidad = int(item.get("cantidad", 0) or 0)
-                except Exception:
-                    try:
-                        cantidad = int(float(str(item.get("cantidad", 0))))
-                    except Exception:
-                        cantidad = 0
-                # valores con fallback para compatibilidad
-                def _f(v, d=0.0):
-                    if v is None or v == "":
-                        return d
-                    try:
-                        return float(v)
-                    except Exception:
-                        try:
-                            return float(str(v).replace(",", "."))
-                        except Exception:
-                            return d
-                productos_json.append({
-                    "id": item.get("producto_id") or idx,
-                    "producto": item.get("producto_id"),
-                    "producto_imagen": item.get("producto_imagen") or item.get("img_url") or item.get("imagen"),
-                    "producto_nombre": item.get("producto_nombre") or item.get("nombre") or item.get("descripcion"),
-                    "cantidad": cantidad,
-                    "valor_unitario": _f(item.get("valor_unitario")),
-                    "valor_venta": _f(item.get("valor_venta")),
-                    "base_igv": _f(item.get("base_igv", item.get("valor_venta"))),
-                    "porcentaje_igv": _f(item.get("porcentaje_igv", 18.0)),
-                    "igv": _f(item.get("igv")),
-                    "tipo_afectacion_igv": item.get("tipo_afectacion_igv", "10"),
-                    "total_impuestos": _f(item.get("total_impuestos", item.get("igv"))),
-                    "precio_unitario": _f(item.get("precio_unitario", item.get("costo_original"))),
-                    "descuento": _f(item.get("descuento")),
-                    "costo_original": _f(item.get("costo_original", item.get("precio_venta"))),
-                    "sku": item.get("sku"),
-                    "is_deleted": item.get("is_deleted", False),
-                    "is_updated": item.get("is_updated", False),
-                })
-
-            nota_credito = getattr(venta, "nota_credito", None)
-            nota_credito_json = None
-            if nota_credito:
-                nota_credito_json = {
-                    "id": nota_credito.id,
-                    "serie": nota_credito.serie,
-                    "correlativo": nota_credito.correlativo,
-                    "tipo_comprobante_modifica": nota_credito.tipo_comprobante_modifica,
-                    "serie_modifica": nota_credito.serie_modifica,
-                    "correlativo_modifica": nota_credito.correlativo_modifica,
-                    "tipo_motivo": nota_credito.tipo_motivo,
-                    "motivo": nota_credito.motivo,
-                    "moneda": nota_credito.moneda,
-                    "total": float(nota_credito.total),
-                    "estado_sunat": nota_credito.estado_sunat,
-                    "xml_url": nota_credito.xml_url,
-                    "pdf_url": nota_credito.pdf_url,
-                    "cdr_url": nota_credito.cdr_url,
-                    "fecha_emision": nota_credito.fecha_emision.isoformat(),
-                }
-
-            from apps.venta.utils import calcular_total_venta
-
-            ventas_json.append({
-                "id": venta.id,
-                "usuario": venta.usuario.id if venta.usuario else None,
-                "tienda": venta.tienda.id if venta.tienda else None,
-                "fecha_hora": venta.fecha_hora.isoformat(),
-                "fecha_realizacion": venta.fecha_realizacion.isoformat() if venta.fecha_realizacion else None,
-                "fecha_cancelacion": venta.fecha_cancelacion.isoformat() if venta.fecha_cancelacion else None,
-                "metodo_pago": venta.metodo_pago,
-                "estado": venta.estado,
-                "activo": venta.activo,
-                "tipo_comprobante": venta.tipo_comprobante,
-                "productos": productos_json,
-                "total": calcular_total_venta(venta),
-                "subtotal": float(venta.subtotal) if venta.subtotal is not None else None,
-                "gravado_total": float(venta.gravado_total) if venta.gravado_total is not None else None,
-                "igv_total": float(venta.igv_total) if venta.igv_total is not None else None,
-                "productos_json": json.dumps(venta.productos_json, indent=4),
-                "comprobante": comprobante_json,
-                "comprobante_nota_credito": nota_credito_json,
-                "tipo_documento_cliente": venta.tipo_documento_cliente,
-                "numero_documento_cliente": venta.numero_documento_cliente,
-                "nombre_cliente": venta.nombre_cliente,
-                "email_cliente": venta.email_cliente,
-                "telefono_cliente": venta.telefono_cliente,
-                "direccion_cliente": venta.direccion_cliente,
-            })
+        ventas_json = [
+            build_venta_detalle_json(venta, request)
+            for venta in result_page  # type: ignore[reportOptionalIterable]
+        ]
 
         return Response({
             "count": total_ventas,
@@ -1064,6 +1175,7 @@ class SalesTotalsView(APIView):
  
             metodo_pago = val('metodo_pago')
             tipo_comprobante = val('tipo_comprobante')
+            tipo_venta = val('tipo_venta')
             nombre_cliente = val('nombre_cliente')
             numero_documento_cliente = val('numero_documento_cliente')
             numero_comprobante = val('numero_comprobante')
@@ -1081,7 +1193,15 @@ class SalesTotalsView(APIView):
  
             if tipo_comprobante:
                 ventas = ventas.filter(tipo_comprobante__iexact=tipo_comprobante)
- 
+
+            if tipo_venta:
+                if tipo_venta.upper() not in ("PEDIDO", "PRESENCIAL"):
+                    return Response(
+                        {"error": "tipo_venta inválido. Valores permitidos: PEDIDO, PRESENCIAL."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                ventas = ventas.filter(tipo_venta__iexact=tipo_venta)
+
             if nombre_cliente:
                 ventas = ventas.filter(nombre_cliente__icontains=nombre_cliente)
  
@@ -1228,6 +1348,7 @@ class SalesTotalsView(APIView):
                     "estado": venta.estado,
                     "activo": venta.activo,
                     "tipo_comprobante": venta.tipo_comprobante,
+                    "tipo_venta": venta.tipo_venta,
                     "productos": productos_json,
                     "total": calcular_total_venta(venta),
                     "subtotal": float(venta.subtotal) if venta.subtotal is not None else None,
@@ -1243,7 +1364,7 @@ class SalesTotalsView(APIView):
                     "telefono_cliente": venta.telefono_cliente,
                     "direccion_cliente": venta.direccion_cliente,
                 })
- 
+
             next_page = page_number + 1 if page_number < total_pages else None
             previous_page = page_number - 1 if page_number > 1 else None
 
@@ -1407,12 +1528,27 @@ class SalesTodayView(APIView):
             from_date_obj = datetime.combine(hoy, time(0, 0, 0), tzinfo=tz)
             to_date_obj = datetime.combine(hoy, time(23, 59, 59), tzinfo=tz)
 
-            ventas = Venta.objects.filter(
-                tienda_id=tienda_id,
-                fecha_hora__range=(from_date_obj, to_date_obj),
-                comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
-                estado__in=["ACEPTADO", "aceptado", "Aceptado"],
-            ).select_related(
+            tipo_venta = request.query_params.get('tipo_venta')
+            if tipo_venta is None or str(tipo_venta).strip() == "":
+                tipo_venta = (request.data.get('tipo_venta') if isinstance(request.data, dict) else None)
+            if tipo_venta not in (None, ""):
+                if str(tipo_venta).strip().upper() not in ("PEDIDO", "PRESENCIAL"):
+                    return Response(
+                        {"error": "tipo_venta inválido. Valores permitidos: PEDIDO, PRESENCIAL."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                tipo_venta = str(tipo_venta).strip()
+
+            filtros_hoy = {
+                "tienda_id": tienda_id,
+                "fecha_hora__range": (from_date_obj, to_date_obj),
+                "comprobante__estado_sunat__in": ["ACEPTADO", "aceptado", "Aceptado"],
+                "estado__in": ["ACEPTADO", "aceptado", "Aceptado"],
+            }
+            if tipo_venta not in (None, ""):
+                filtros_hoy["tipo_venta__iexact"] = tipo_venta
+
+            ventas = Venta.objects.filter(**filtros_hoy).select_related(
                 "comprobante", "nota_credito", "usuario", "tienda"
             )
 
@@ -1525,6 +1661,7 @@ class SalesTodayView(APIView):
                     "estado": venta.estado,
                     "activo": venta.activo,
                     "tipo_comprobante": venta.tipo_comprobante,
+                    "tipo_venta": venta.tipo_venta,
                     "productos": productos_json,
                     "total": calcular_total_venta(venta),
                     "subtotal": float(venta.subtotal) if venta.subtotal is not None else None,

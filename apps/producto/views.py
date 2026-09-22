@@ -34,6 +34,21 @@ class ProductoPagination(PageNumberPagination):
     page_size_query_param = 'page_size'
     max_page_size = 100
 import base64
+from django.http import QueryDict
+
+
+def _mutable_data(request):
+    """Copia mutable de request.data sin deepcopy de archivos.
+
+    QueryDict.copy() hace deepcopy y falla con archivos temporales en disco
+    (TemporaryUploadedFile envuelve un BufferedRandom no copiable):
+    TypeError: cannot pickle 'BufferedRandom' instances.
+    .dict() conserva las referencias a los archivos y es lo que el código
+    ya termina usando más abajo de todos modos.
+    """
+    if isinstance(request.data, QueryDict):
+        return request.data.dict()
+    return dict(request.data)
 
 
 
@@ -94,6 +109,21 @@ class CreateProductoAPIViewReactNative(APIView):
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
             return Response({"error": "Usuario sin tienda asignada"}, status=400)
+
+        from apps.tienda.utils import renovar_si_vencido, get_estado_limites
+        renovar_si_vencido(tienda)
+        # Bloqueo por límite del plan (superuser bypass para soporte)
+        if not request.user.is_superuser:
+            estado = get_estado_limites(tienda)
+            if estado["bloqueado_productos"]:
+                return Response(
+                    {
+                        "error": f'Límite de productos del plan alcanzado ({estado["num_productos"]}/{estado["limite_productos"]}).',
+                        "uso": estado["num_productos"],
+                        "limite": estado["limite_productos"],
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         # -------------------------------
         # Imagen: viene como base64 dentro del JSON, no como archivo multipart
@@ -403,11 +433,26 @@ class CreateProductoAPIView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request):
-        data = request.data.copy()
+        data = _mutable_data(request)
 
         tienda = getattr(request.user, "tienda", None)
         if not tienda:
             return Response({"error": "Usuario sin tienda asignada"}, status=400)
+
+        from apps.tienda.utils import renovar_si_vencido, get_estado_limites
+        renovar_si_vencido(tienda)
+        # Bloqueo por límite del plan (superuser bypass para soporte)
+        if not request.user.is_superuser:
+            estado = get_estado_limites(tienda)
+            if estado["bloqueado_productos"]:
+                return Response(
+                    {
+                        "error": f'Límite de productos del plan alcanzado ({estado["num_productos"]}/{estado["limite_productos"]}).',
+                        "uso": estado["num_productos"],
+                        "limite": estado["limite_productos"],
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         # -------------------------------
         # Convertir caracteristicas JSON string → dict
@@ -543,7 +588,7 @@ class UpdateProductoAPIView(APIView):
         tienda = getattr(request.user, "tienda", None)
         producto = get_object_or_404(Producto, id=id, tienda=tienda)
 
-        data = request.data.copy()
+        data = _mutable_data(request)
 
         # ------------------------------------
         # Convertir JSON string → dict

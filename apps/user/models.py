@@ -14,7 +14,7 @@ class UserManager(BaseUserManager):
     def create_user(self, username, password=None, **extra_fields):
         if not username:
             raise ValueError("The Username field must be set")
-        username = username.lower()
+        # Sensible a mayúsculas: se guarda el username exacto, sin lower/strip.
         user = self.model(username=username, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
@@ -35,8 +35,14 @@ class UserManager(BaseUserManager):
         }
              )
         user.tienda = tienda
- 
+
         user.save(using=self._db)
+
+        # Seed portable (ORM, cualquier BD): planes iniciales + Demo
+        # a todas las tiendas sin plan (incluye la de arriba).
+        from apps.tienda.seeders import seed_planes
+        seed_planes(using=self._db)
+
         return user
 
 

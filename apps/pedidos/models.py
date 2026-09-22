@@ -8,14 +8,16 @@ User = settings.AUTH_USER_MODEL
 
 class Pedido(models.Model):
     ESTADO_CHOICES = [
-        ('COTIZADO', 'Cotizado'),
         ('PENDIENTE', 'Pendiente'),
-        ('CONFIRMADO', 'Confirmado'),
-        ('EN_PREPARACION', 'En preparación'),
-        ('LISTO', 'Listo'),
-        ('ENTREGADO', 'Entregado'),
+        ('COMPLETADO', 'Completado'),
         ('CANCELADO', 'Cancelado'),
+        ('VENCIDO', 'Vencido'),
     ]
+
+    # Plazos automáticos: vencimiento 30 días desde la creación,
+    # eliminación permanente 3 días después del vencimiento.
+    DIAS_VENCIMIENTO = 30
+    DIAS_ELIMINACION_TRAS_VENCIMIENTO = 3
 
     TIPO_PEDIDO_CHOICES = [
         ('MESA', 'Mesa'),
@@ -46,6 +48,11 @@ class Pedido(models.Model):
     # Relaciones
     usuario = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     tienda = models.ForeignKey(Tienda, on_delete=models.SET_NULL, null=True)
+    # Venta generada desde este pedido (se enlaza al crear la venta con pedido_id)
+    venta = models.ForeignKey(
+        'venta.Venta', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='pedidos',
+    )
 
     # Identificación
     numero_pedido = models.CharField(max_length=50, unique=True)
@@ -58,11 +65,12 @@ class Pedido(models.Model):
     fecha_hora = models.DateTimeField()
     fecha_realizacion = models.DateTimeField(auto_now_add=True, null=True, blank=True)
     fecha_vencimiento = models.DateTimeField(null=True, blank=True)
+    fecha_eliminacion = models.DateTimeField(null=True, blank=True)
     fecha_entrega_estimada = models.DateTimeField(null=True, blank=True)
     fecha_cancelacion = models.DateTimeField(null=True, blank=True)
 
     # Estado
-    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='COTIZADO')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='PENDIENTE')
     prioridad = models.CharField(max_length=10, choices=PRIORIDAD_CHOICES, default='NORMAL')
     activo = models.BooleanField(default=True)
 
@@ -90,6 +98,7 @@ class Pedido(models.Model):
     # Dirección de envío
     direccion_envio = models.TextField(null=True, blank=True)
     referencia_ubicacion = models.CharField(max_length=255, null=True, blank=True)
+    plus_code = models.CharField(max_length=50, null=True, blank=True)
 
     # Notas
     observaciones = models.TextField(null=True, blank=True)

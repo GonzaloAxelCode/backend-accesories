@@ -23,7 +23,7 @@ class PedidoAdmin(admin.ModelAdmin):
             'fields': ('tipo_pedido', 'canal_venta', 'prioridad')
         }),
         ('Fechas', {
-            'fields': ('fecha_hora', 'fecha_vencimiento', 'fecha_entrega_estimada', 'fecha_realizacion', 'fecha_cancelacion')
+            'fields': ('fecha_hora', 'fecha_vencimiento', 'fecha_eliminacion', 'fecha_entrega_estimada', 'fecha_realizacion', 'fecha_cancelacion')
         }),
         ('Estado', {
             'fields': ('estado', 'activo')
@@ -38,12 +38,12 @@ class PedidoAdmin(admin.ModelAdmin):
             'fields': ('tipo_documento_cliente', 'numero_documento_cliente', 'nombre_cliente', 'email_cliente', 'telefono_cliente')
         }),
         ('Dirección de Envío', {
-            'fields': ('direccion_envio', 'referencia_ubicacion')
+            'fields': ('direccion_envio', 'referencia_ubicacion', 'plus_code')
         }),
         ('Notas', {
             'fields': ('observaciones', 'notas_internas', 'motivo_cancelacion')
         }),
         ('Referencias', {
-            'fields': ('referencia_externa', 'productos_json')
+            'fields': ('referencia_externa', 'venta', 'productos_json')
         }),
     )

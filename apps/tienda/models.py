@@ -21,6 +21,7 @@ class PlanSuscripcion(models.Model):
     limite_boletas = models.PositiveIntegerField(default=0)
     limite_facturas = models.PositiveIntegerField(default=0)
     limite_personal = models.PositiveIntegerField(default=0)
+    limite_productos = models.PositiveIntegerField(default=0)
 
     precio_mensual = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     precio_anual = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -68,6 +69,44 @@ class UsoMensualTienda(models.Model):
         return f"{self.tienda} - {self.mes:%Y-%m}"
 
 
+class HistorialPeriodoPlan(models.Model):
+    """
+    Snapshot del uso de un periodo de 30 días al momento de la renovación
+    automática (ver renovar_si_vencido en utils.py). No se edita ni se borra:
+    es el registro del mes para auditoría.
+    """
+    tienda = models.ForeignKey(
+        "Tienda",
+        on_delete=models.CASCADE,
+        related_name="historial_periodos",
+    )
+    plan = models.ForeignKey(
+        "PlanSuscripcion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="periodos_historial",
+    )
+    inicio = models.DateTimeField()
+    fin = models.DateTimeField()
+    boletas_emitidas = models.PositiveIntegerField(default=0)
+    facturas_emitidas = models.PositiveIntegerField(default=0)
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Historial de periodo de plan"
+        verbose_name_plural = "Historial de periodos de planes"
+        ordering = ["-inicio"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tienda", "inicio"], name="uq_historial_tienda_inicio"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.tienda} [{self.inicio:%Y-%m-%d} → {self.fin:%Y-%m-%d}]"
+
+
 class Tienda(models.Model):
     nombre = models.CharField(max_length=100, unique=True)
     razon_social = models.CharField(max_length=150, null=True, blank=True)
@@ -89,6 +128,11 @@ class Tienda(models.Model):
     # Credenciales Clave SOL (SUNAT)
     sol_user = models.CharField(max_length=100, null=True, blank=True)
     sol_password = models.CharField(max_length=255, null=True, blank=True)
+    # Keys de SUNAT para Guías de Remisión Electrónica (GRE),
+    # generadas en SOL (API SUNAT → Registro de credenciales).
+    # Por defecto vacías; solo se usan para armar el emisor al enviar a SUNAT.
+    client_id = models.CharField(max_length=100, default="", null=True, blank=True)
+    client_secret = models.CharField(max_length=255, default="", null=True, blank=True)
     design_boleta = models.CharField(max_length=100, default='', blank=True)
     design_factura = models.CharField(max_length=100, default='', blank=True)
     tipo_style_boleta_ticket = models.CharField(max_length=100, default='default', blank=True)
@@ -104,10 +148,17 @@ class Tienda(models.Model):
         null=True,
         blank=True,
     )
+    plan_desde = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Inicio del periodo vigente del plan (ventana de 30 días corridos)",
+    )
 
     def save(self, *args, **kwargs):
         if self.is_deleted:
             self.activo = False
+        if self.plan_id and not self.plan_desde:
+            self.plan_desde = timezone.now()
         if self.certificado:
             name = self.certificado.name.lower()
             if not name.endswith(('.p12', '.pfx', '.pem')):
@@ -134,6 +185,7 @@ class Tienda(models.Model):
     correlativo_inicial_boleta = models.IntegerField(default=1,null=True, blank=True)
     correlativo_inicial_factura = models.IntegerField(default=1,null=True, blank=True)
     correlativo_inicial_nota_credito = models.IntegerField(default=1 ,null=True, blank=True)
+    correlativo_inicial_guia_remision = models.IntegerField(default=1 ,null=True, blank=True)
     def __str__(self):
         return self.nombre
     class Meta:

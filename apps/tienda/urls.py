@@ -1,6 +1,6 @@
 from django.urls import path
 from .views import (
-    CreateTienda, GetAllTiendas, GetTienda, UpdateTienda,
+    CreateTienda, GetAllTiendas, GetTienda, UpdateTienda, UpdateTiendaLogos,
     DeactivateTienda, HabilitarTiendaEliminada, GetMiTiendaView,
     UpdateTiendaStyles, GetPlanosYSuscripcionTienda,
     CreatePlanSuscripcion, ListPlanSuscripcion, ChangePlanTienda,
@@ -15,6 +15,7 @@ urlpatterns = [
     # Ver/actualizar tienda
     path('tiendas/<int:id>/', GetTienda.as_view(), name='get_tienda'),
     path('tiendas/update/<int:id>/', UpdateTienda.as_view(), name='update_tienda'),
+    path('tiendas/<int:id>/logos/', UpdateTiendaLogos.as_view(), name='update_tienda_logos'),
     path('tiendas/styles/<int:id>/', UpdateTiendaStyles.as_view(), name='update_tienda_styles'),
     path('tiendas/desactivate/<int:id>/', DeactivateTienda.as_view(), name='deactivate_tienda'),
     path('tiendas/habilitar/<int:id>/', HabilitarTiendaEliminada.as_view(), name='habilitar_tienda'),

@@ -81,7 +81,17 @@ class UserAccountSerializer(serializers.ModelSerializer):
     
     
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Login sensible a mayúsculas/minúsculas y espacios: no recortar
+        # espacios (DRF CharField recorta por defecto con trim_whitespace=True).
+        self.fields[self.username_field] = serializers.CharField(trim_whitespace=False)
+        from rest_framework_simplejwt.serializers import PasswordField
+        self.fields['password'] = PasswordField(trim_whitespace=False)
+
     def validate(self, attrs):
+        # Login sensible: se usa el username exacto, sin normalizar
+        # (ModelBackend usa __exact). 'admin' != 'ADMIN' != '  admin  '.
         data = super().validate(attrs)
         data["user_id"] = self.user.id  # type: ignore # Agrega el ID del usuario
         data["tienda"] = self.user.tienda.id  # type: ignore # <- Agrega la tienda asociada

@@ -1,4 +1,5 @@
 # apps/tienda/serializers.py
+from django.db.models import Q
 from rest_framework import serializers
 
 from apps.user.models import UserAccount
@@ -33,7 +34,8 @@ class PlanSuscripcionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'nombre_plan', 'descripcion', 'lista_descripcion',
             'limite_boletas',
-            'limite_facturas', 'limite_personal', 'precio_mensual',
+            'limite_facturas', 'limite_personal', 'limite_productos',
+            'precio_mensual',
             'precio_anual',
             'moneda', 'periodo_facturacion', 'activo', 'fecha_creacion'
         ]
@@ -43,15 +45,93 @@ class TiendaSerializer(serializers.ModelSerializer):
 
     users_tienda = UserSerializer(many=True, read_only=True)
     propietario_data = PropietarioDataSerializer(source="propietario", read_only=True)
+    # `propietario` ahora es objeto anidado (id, username, nombres, foto...).
+    # Para escribir se usa `propietario_id` (también se acepta el legacy
+    # `propietario: <id>`, normalizado en las vistas).
+    propietario = serializers.SerializerMethodField()
+    propietario_id = serializers.PrimaryKeyRelatedField(
+        queryset=UserAccount.objects.all(),
+        source="propietario",
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+    # Tiendas hijas (sucursales) completas, un solo nivel: en contexto
+    # anidado se devuelve [] para evitar recursión infinita.
+    sucursales = serializers.SerializerMethodField()
     subscripcion_data = PlanSuscripcionSerializer(source="plan", read_only=True)
     tienda_stats = serializers.SerializerMethodField()
+    # Flags de estado (el frontend muestra "configurado" sin ver el secreto)
+    tiene_sol = serializers.SerializerMethodField()
+    tiene_certificado = serializers.SerializerMethodField()
+    tiene_credenciales_guia = serializers.SerializerMethodField()
+    # Periodo vigente del plan (ventana de 30 días desde plan_desde)
+    plan_hasta = serializers.SerializerMethodField()
+    plan_dias_restantes = serializers.SerializerMethodField()
+    plan_periodo_vencido = serializers.SerializerMethodField()
 
     class Meta:
         model = Tienda
         fields = '__all__'
         extra_kwargs = {
+            # Secretos SUNAT: se pueden guardar/actualizar pero NUNCA se
+            # devuelven en ningún GET. Ver get_tiene_* para el estado visible.
             'cert_clave_privada': {'write_only': True},
+            'cert_clave_publica': {'write_only': True},
+            'sol_user': {'write_only': True},
+            'sol_password': {'write_only': True},
+            'client_id': {'write_only': True},
+            'client_secret': {'write_only': True},
+            'certificado': {'write_only': True},
         }
+
+    def get_propietario(self, obj):
+        if not obj.propietario:
+            return None
+        return PropietarioDataSerializer(obj.propietario).data
+
+    def get_sucursales(self, obj):
+        if self.context.get("tienda_nested"):
+            return []
+        hijas = obj.sucursales.filter(is_deleted=False).order_by("-date_created")
+        contexto = dict(self.context)
+        contexto["tienda_nested"] = True
+        return TiendaSerializer(hijas, many=True, context=contexto).data
+
+    def get_tiene_sol(self, obj):
+        return bool(obj.sol_user and obj.sol_password)
+    def get_tiene_credenciales_guia(self, obj):
+        return bool(obj.client_id and obj.client_secret)
+
+    def get_tiene_certificado(self, obj):
+        return bool(
+            obj.certificado or obj.cert_clave_privada or obj.cert_clave_publica
+        )
+
+    def _periodo_plan(self, obj):
+        if not obj.plan_id:
+            return None, None
+        from .utils import get_periodo_plan
+        return get_periodo_plan(obj)
+
+    def get_plan_hasta(self, obj):
+        _, fin = self._periodo_plan(obj)
+        return fin.isoformat() if fin else None
+
+    def get_plan_dias_restantes(self, obj):
+        from django.utils import timezone
+        inicio, fin = self._periodo_plan(obj)
+        if not fin:
+            return None
+        ahora = timezone.now()
+        return max(0, (fin - ahora).days) if ahora < fin else 0
+
+    def get_plan_periodo_vencido(self, obj):
+        from django.utils import timezone
+        _, fin = self._periodo_plan(obj)
+        if not fin:
+            return None
+        return timezone.now() >= fin
 
     def validate_nombre(self, value):
         qs = Tienda.objects.filter(nombre__iexact=value)
@@ -61,16 +141,51 @@ class TiendaSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Ya existe una tienda con este nombre.")
         return value
 
+    def validate(self, attrs):
+        # Serie única dentro del grupo familiar (padre + sucursales):
+        # la sucursal no puede repetir la serie del padre ni la de sus
+        # hermanas, y el padre no puede tomar la de una de sus hijas.
+        # Comparación case-insensitive (igual que el resto del sistema).
+        # Vacías (None/"") no se validan: varias tiendas pueden no tener serie.
+        if "serie" in attrs and isinstance(attrs["serie"], str):
+            attrs["serie"] = attrs["serie"].strip()
+        serie = attrs.get("serie", getattr(self.instance, "serie", None))
+        padre = attrs.get("tienda_padre", getattr(self.instance, "tienda_padre", None))
+        if serie:
+            qs = Tienda.objects.filter(serie__iexact=serie)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if padre is not None:
+                padre_id = padre.pk if isinstance(padre, Tienda) else padre
+                if qs.filter(Q(pk=padre_id) | Q(tienda_padre_id=padre_id)).exists():
+                    raise serializers.ValidationError({
+                        "serie": f"La serie '{serie}' ya está en uso por la tienda padre o una sucursal hermana. Cada tienda debe tener una serie diferente."
+                    })
+            elif self.instance is not None:
+                if qs.filter(tienda_padre=self.instance).exists():
+                    raise serializers.ValidationError({
+                        "serie": f"La serie '{serie}' ya está en uso por una de sus sucursales. Cada tienda debe tener una serie diferente."
+                    })
+        return attrs
+
     def get_tienda_stats(self, obj):
         from django.db.models import Count, Q, Sum
 
-        from apps.venta.models import Venta
+        from apps.comprobante.models import ComprobanteElectronico
+        from apps.producto.models import Producto
 
-        # Solo boletas y facturas (case-insensitive: en BD vienen como
-        # 'Boleta'/'Factura'). Las ANULADAS no cuentan. Las notas de
-        # crédito viven en otro modelo y son ilimitadas: no se cuentan.
-        base = Venta.objects.filter(tienda=obj, activo=True).exclude(
-            estado__iexact="ANULADA"
+        # Totales históricos desde comprobantes reales (no desde ventas):
+        # hay ventas PENDIENTE legacy que nunca generaron comprobante e
+        # inflaban los conteos. Solo boletas y facturas (case-insensitive:
+        # en BD vienen como 'Boleta'/'Factura'). No cuentan RECHAZADOS ni
+        # los de ventas ANULADAS. Las notas de crédito viven en otro modelo
+        # y son ilimitadas: no se cuentan.
+        base = (
+            ComprobanteElectronico.objects.filter(
+                venta__tienda=obj, venta__activo=True
+            )
+            .exclude(estado_sunat__iexact="RECHAZADO")
+            .exclude(venta__estado__iexact="ANULADA")
         )
         stats = base.aggregate(
             boletas=Count("pk", filter=Q(tipo_comprobante__iexact="boleta")),
@@ -84,12 +199,16 @@ class TiendaSerializer(serializers.ModelSerializer):
         )
         boletas = stats["boletas"] or 0
         facturas = stats["facturas"] or 0
+        # Productos activos de la tienda (los eliminados usan activo=False)
+        num_productos = Producto.objects.filter(tienda=obj, activo=True).count()
+        from .utils import get_personal_contable
         return {
             "total_comprobantes": boletas + facturas,
             "boletas": boletas,
             "facturas": facturas,
             "total_facturado": str(stats["total"] or 0),
-            "num_personal": obj.users_tienda.count(),
+            "num_productos": num_productos,
+            "num_personal": get_personal_contable(obj).count(),
             "fecha_creacion": obj.date_created.isoformat() if obj.date_created else None,
             "nombre_suscripcion": obj.plan.nombre_plan if obj.plan else None,
         }
@@ -148,9 +267,14 @@ class TiendaSerializer(serializers.ModelSerializer):
             "can_create_proveedor", "can_update_proveedor", "can_delete_proveedor",
         ]
 
-        request = self.context.get("request")
-        if request and request.user and request.user.is_superuser:
-            data["sol_password"] = instance.sol_password
+        # Defensa en profundidad: los secretos SUNAT jamás salen en un GET,
+        # ni siquiera para superuser (para soporte, verlos directo en BD/admin).
+        for secreto in (
+            "sol_password", "sol_user",
+            "cert_clave_privada", "cert_clave_publica", "certificado",
+            "client_id", "client_secret",
+        ):
+            data.pop(secreto, None)
 
         enriched_users = []
         for user_data in data.get("users_tienda", []):
@@ -160,9 +284,11 @@ class TiendaSerializer(serializers.ModelSerializer):
 
         data["users_tienda"] = enriched_users
 
-        if "propietario_data" in data:
-            data["propietario_data"] = self._build_propietario_data(instance, ALL_PERMISSIONS)
-        elif data.get("propietario") is not None and "propietario_data" not in data:
-            data["propietario_data"] = self._build_propietario_data(instance, ALL_PERMISSIONS)
+        # Propietario enriquecido una sola vez para `propietario` y
+        # `propietario_data` (compatibilidad): objeto con id, username,
+        # nombres, foto + permisos.
+        propietario_enriquecido = self._build_propietario_data(instance, ALL_PERMISSIONS)
+        data["propietario"] = propietario_enriquecido
+        data["propietario_data"] = propietario_enriquecido
 
         return data
