@@ -110,7 +110,9 @@ class HistorialPeriodoPlan(models.Model):
 class Tienda(models.Model):
     nombre = models.CharField(max_length=100, unique=True)
     razon_social = models.CharField(max_length=150, null=True, blank=True)
-    ruc = models.CharField(max_length=11, null=True, blank=True)
+    # max 50: al eliminar temporalmente se concatena "_is_deleted_{id}"
+    # para liberar el nombre/RUC originales (ver EliminarTemporalTienda).
+    ruc = models.CharField(max_length=50, null=True, blank=True)
 
     serie = models.CharField(max_length=150, null=True, blank=True)
     representante = models.CharField(max_length=150, null=True, blank=True)

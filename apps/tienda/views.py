@@ -365,6 +365,21 @@ class EliminarTemporalTienda(APIView):
         tienda = get_object_or_404(Tienda, id=id, is_deleted=False)
         self.check_object_permissions(request, tienda)
 
+        # Liberar nombre/RUC originales (unique): se concatenan con el
+        # sufijo "_is_deleted_{id}". Con truncado si exceden el max_length.
+        sufijo = f"_is_deleted_{tienda.id}"
+        max_nombre = Tienda._meta.get_field("nombre").max_length
+        nuevo_nombre = f"{tienda.nombre}{sufijo}"
+        if len(nuevo_nombre) > max_nombre:
+            nuevo_nombre = f"{tienda.nombre[:max_nombre - len(sufijo)]}{sufijo}"
+        tienda.nombre = nuevo_nombre
+        if tienda.ruc:
+            max_ruc = Tienda._meta.get_field("ruc").max_length
+            nuevo_ruc = f"{tienda.ruc}{sufijo}"
+            if len(nuevo_ruc) > max_ruc:
+                nuevo_ruc = f"{tienda.ruc[:max_ruc - len(sufijo)]}{sufijo}"
+            tienda.ruc = nuevo_ruc
+
         tienda.is_deleted = True
         # save() fuerza activo=False cuando is_deleted=True
         tienda.save()
@@ -375,6 +390,7 @@ class EliminarTemporalTienda(APIView):
             {
                 "message": "Tienda eliminada temporalmente y usuarios desactivados correctamente.",
                 "tienda_id": tienda.id,
+                "nombre": tienda.nombre,
                 "is_deleted": tienda.is_deleted,
                 "activo": tienda.activo,
             },
@@ -406,6 +422,19 @@ class RestaurarTiendaEliminada(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Revertir el sufijo "_is_deleted_{id}" para recuperar nombre/RUC
+        # originales. Si otra tienda activa ya tomó ese nombre, no se restaura.
+        sufijo = f"_is_deleted_{tienda.id}"
+        nombre_orig = tienda.nombre[:-len(sufijo)] if tienda.nombre.endswith(sufijo) else tienda.nombre
+        if Tienda.objects.filter(nombre__iexact=nombre_orig, is_deleted=False).exclude(id=tienda.id).exists():
+            return Response(
+                {"error": f"No se puede restaurar: el nombre '{nombre_orig}' ya está en uso por otra tienda."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        tienda.nombre = nombre_orig
+        if tienda.ruc and tienda.ruc.endswith(sufijo):
+            tienda.ruc = tienda.ruc[:-len(sufijo)] or None
+
         tienda.is_deleted = False
         tienda.activo = True
         tienda.save()
@@ -415,6 +444,7 @@ class RestaurarTiendaEliminada(APIView):
             {
                 "message": "Tienda restaurada correctamente. Los usuarios permanecen desactivados.",
                 "tienda_id": tienda.id,
+                "nombre": tienda.nombre,
                 "is_deleted": tienda.is_deleted,
                 "activo": tienda.activo,
             },

@@ -52,6 +52,8 @@ class ComprobanteCompra(models.Model):
     enlace_verificacion = models.URLField(max_length=300, null=True, blank=True)
 
     # --- Archivos ---
+    # Legacy (se mantienen por compatibilidad con registros antiguos).
+    # Lo nuevo va en xml_url / pdf_url / image_url.
     archivo_xml = models.FileField(
         upload_to='compras/xml/',
         validators=[FileExtensionValidator(['xml'])],
@@ -65,34 +67,37 @@ class ComprobanteCompra(models.Model):
         null=True,
     )
 
+    # --- URLs de archivos (unificado: manual o subida de xml/pdf/foto) ---
+    # Null si el usuario no sube nada (formulario manual puro).
+    xml_url = models.URLField(max_length=500, null=True, blank=True)
+    pdf_url = models.URLField(max_length=500, null=True, blank=True)
+    image_url = models.URLField(max_length=500, null=True, blank=True)
+
     # --- Detalle (se mantiene como JSON, sin cambios) ---
     items = models.JSONField(default=list, blank=True)
 
     observaciones = models.TextField(blank=True, null=True)
     date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 
+    def save(self, *args, **kwargs):
+        # Normalizar para que el constraint único no se evada con
+        # "f001" vs "F001" o espacios laterales.
+        if self.serie:
+            self.serie = self.serie.strip().upper()
+        if self.correlativo:
+            self.correlativo = self.correlativo.strip()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.get_tipo_comprobante_display()} {self.serie}-{self.correlativo}"
 
     class Meta:
         ordering = ["-date_created"]
-
-
-class ComprobanteCompraFiles(models.Model):
-    TIPO_COMPROBANTE_CHOICES = [
-        ('01', 'Factura'),
-        ('03', 'Boleta'),
-    ]
-
-    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE)
-    tipo_comprobante = models.CharField(max_length=2, choices=TIPO_COMPROBANTE_CHOICES, default='01')
-    observaciones = models.TextField(blank=True, null=True)
-    xml_url = models.URLField(max_length=300, blank=True, null=True)
-    pdf_url = models.URLField(max_length=300, blank=True, null=True)
-    date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)
-
-    def __str__(self):
-        return f"{self.get_tipo_comprobante_display()} - {self.tienda} - {self.date_created}"
-
-    class Meta:
-        ordering = ["-date_created"]
+        constraints = [
+            # Sin series ni correlativos repetidos: el comprobante es único
+            # por (tienda, tipo, serie, correlativo).
+            models.UniqueConstraint(
+                fields=["tienda", "tipo_comprobante", "serie", "correlativo"],
+                name="uq_compra_tienda_tipo_serie_corr",
+            ),
+        ]

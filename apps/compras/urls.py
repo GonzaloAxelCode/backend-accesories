@@ -1,9 +1,14 @@
 from django.urls import path
-from .views import CrearComprobanteCompraView, ListaComprobantesCompraView, SubirComprobanteCompraFilesView, ListarComprobanteCompraFilesView
+from .views import CrearCompraView, ListaComprasView, ActualizarCompraView
 
 urlpatterns = [
-    path('compras/comprobante/crear/', CrearComprobanteCompraView.as_view(), name='crear-comprobante-compra'),
-    path('compras/comprobante/lista/', ListaComprobantesCompraView.as_view(), name='lista-comprobantes-compra'),
-    path('compras/comprobante/subir-files/', SubirComprobanteCompraFilesView.as_view(), name='subir-comprobante-files'),
-    path('compras/comprobante/files/', ListarComprobanteCompraFilesView.as_view(), name='lista-comprobante-files'),
+    # Endpoints únicos y simples
+    path('compras/crear/', CrearCompraView.as_view(), name='crear-compra'),
+    path('compras/lista/', ListaComprasView.as_view(), name='lista-compras'),
+    path('compras/actualizar/<int:id>/', ActualizarCompraView.as_view(), name='actualizar-compra'),
+
+    # Aliases legacy (frontend antiguo) -> misma vista unificada
+    path('compras/comprobante/crear/', CrearCompraView.as_view(), name='crear-comprobante-compra'),
+    path('compras/comprobante/lista/', ListaComprasView.as_view(), name='lista-comprobantes-compra'),
+    path('compras/comprobante/actualizar/<int:id>/', ActualizarCompraView.as_view(), name='actualizar-comprobante-compra'),
 ]

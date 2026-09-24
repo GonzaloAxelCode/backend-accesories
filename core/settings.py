@@ -17,8 +17,16 @@ def get_local_ip():
 
 LOCAL_IP = get_local_ip()
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+
 env = environ.Env()
-environ.Env.read_env()
+# Cargar el .env del proyecto (core/.env). No pisa variables ya
+# exportadas en el entorno (supervisor, sistema, etc.).
+_CORE_ENV = os.path.join(BASE_DIR, "core", ".env")
+if os.path.exists(_CORE_ENV):
+    environ.Env.read_env(_CORE_ENV)
+else:
+    environ.Env.read_env()  # fallback: .env del cwd (comportamiento anterior)
 ENVIRONMENT = env
 
 
@@ -26,13 +34,13 @@ SUNAT_PHP = os.getenv("SUNAT_PHP", "").strip()
 SUNAT_API_KEY = os.getenv("SUNAT_API_KEY", "").strip()
 
 R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
-R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
-R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
-R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "")
-R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL", "")
-R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "")
-
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Nombres usados en el .env (con fallback a los nombres antiguos):
+# R2_ENDPOINT / R2_KEY / R2_SECRET / R2_BUCKET / R2_BASE_URL
+R2_ACCESS_KEY_ID = os.getenv("R2_KEY", "") or os.getenv("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET", "") or os.getenv("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET_NAME = os.getenv("R2_BUCKET", "") or os.getenv("R2_BUCKET_NAME", "")
+R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT", "") or os.getenv("R2_ENDPOINT_URL", "")
+R2_PUBLIC_URL = os.getenv("R2_BASE_URL", "") or os.getenv("R2_PUBLIC_URL", "")
 
 
 SECRET_KEY = 'django-insecure-b_(uj)meht&*#4#223px8w@t=l6emfbdtw2jcw+ei39d!j&5c%'
