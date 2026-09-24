@@ -134,14 +134,24 @@ class TiendaSerializer(serializers.ModelSerializer):
         return timezone.now() >= fin
 
     def validate_nombre(self, value):
+        # Nombre único global (padres + sucursales), case-insensitive y
+        # sin espacios laterales: "Tienda", "tienda" y " Tienda " chocan.
+        if isinstance(value, str):
+            value = value.strip()
+        if not value:
+            raise serializers.ValidationError("El nombre no puede estar vacío.")
         qs = Tienda.objects.filter(nombre__iexact=value)
         if self.instance:
-            qs = qs.exclude(id=self.instance.id)
+            qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
-            raise serializers.ValidationError("Ya existe una tienda con este nombre.")
+            raise serializers.ValidationError("Ya existe una tienda o sucursal con este nombre.")
         return value
 
     def validate(self, attrs):
+        # Defensa en profundidad: normalizar nombre aquí también (además de
+        # validate_nombre) para que nunca se guarde con espacios laterales.
+        if "nombre" in attrs and isinstance(attrs["nombre"], str):
+            attrs["nombre"] = attrs["nombre"].strip()
         # Serie única dentro del grupo familiar (padre + sucursales):
         # la sucursal no puede repetir la serie del padre ni la de sus
         # hermanas, y el padre no puede tomar la de una de sus hijas.
@@ -165,6 +175,39 @@ class TiendaSerializer(serializers.ModelSerializer):
                 if qs.filter(tienda_padre=self.instance).exists():
                     raise serializers.ValidationError({
                         "serie": f"La serie '{serie}' ya está en uso por una de sus sucursales. Cada tienda debe tener una serie diferente."
+                    })
+
+        # RUC único por familia: dos tiendas padre no pueden compartir RUC.
+        # Solo las sucursales pueden repetir el RUC de su propio padre
+        # (lo heredan). Vacíos (None/"") no se validan.
+        if "ruc" in attrs and isinstance(attrs["ruc"], str):
+            attrs["ruc"] = attrs["ruc"].strip() or None
+        ruc = attrs.get("ruc", getattr(self.instance, "ruc", None))
+        if isinstance(ruc, str):
+            ruc = ruc.strip() or None
+        if ruc:
+            if padre is not None:
+                # Es sucursal: su RUC debe ser el de su padre (heredado).
+                padre_obj = padre if isinstance(padre, Tienda) else Tienda.objects.filter(pk=padre).first()
+                padre_ruc = (padre_obj.ruc or "").strip() if padre_obj else ""
+                if not padre_ruc:
+                    raise serializers.ValidationError({
+                        "ruc": "La tienda padre no tiene RUC; la sucursal lo hereda y no puede definir uno propio."
+                    })
+                if ruc != padre_ruc:
+                    raise serializers.ValidationError({
+                        "ruc": f"La sucursal hereda el RUC de su tienda padre ({padre_ruc}) y no puede usar otro."
+                    })
+            else:
+                # Es tienda padre/principal: el RUC no puede estar en otra familia.
+                qs = Tienda.objects.filter(ruc=ruc)
+                if self.instance:
+                    qs = qs.exclude(pk=self.instance.pk)
+                    # Sus propias sucursales comparten su RUC legítimamente.
+                    qs = qs.exclude(tienda_padre=self.instance)
+                if qs.exists():
+                    raise serializers.ValidationError({
+                        "ruc": f"Ya existe otra tienda con el RUC '{ruc}'. Cada tienda padre debe tener un RUC único."
                     })
         return attrs
 

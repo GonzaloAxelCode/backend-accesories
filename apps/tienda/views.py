@@ -105,9 +105,11 @@ class CreateTienda(APIView):
             )
 
         nombre_tienda = request.data.get("nombre")
+        if isinstance(nombre_tienda, str):
+            nombre_tienda = nombre_tienda.strip()
         if nombre_tienda and Tienda.objects.filter(nombre__iexact=nombre_tienda).exists():
             return Response(
-                {"error": f"Ya existe una tienda con el nombre '{nombre_tienda}'."},
+                {"error": f"Ya existe una tienda o sucursal con el nombre '{nombre_tienda}'."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -339,44 +341,151 @@ class UpdateTiendaLogos(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-class DeactivateTienda(APIView):
-    """Activar/desactivar tienda"""
+def _parse_bool(value):
+    """Convierte true/false (bool, int, str) a bool. Retorna None si no es válido."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "1", "t", "yes", "y", "si", "sí"):
+            return True
+        if v in ("false", "0", "f", "no", "n"):
+            return False
+    return None
+
+
+class EliminarTemporalTienda(APIView):
+    """Borrado temporal: marca la tienda como is_deleted=True (activo=False)
+    y desactiva todo su personal (users is_active=False)."""
     permission_classes = [IsAuthenticated, IsAdminTienda]
+
+    def _eliminar(self, request, id):
+        tienda = get_object_or_404(Tienda, id=id, is_deleted=False)
+        self.check_object_permissions(request, tienda)
+
+        tienda.is_deleted = True
+        # save() fuerza activo=False cuando is_deleted=True
+        tienda.save()
+
+        User.objects.filter(tienda=tienda).update(is_active=False)
+
+        return Response(
+            {
+                "message": "Tienda eliminada temporalmente y usuarios desactivados correctamente.",
+                "tienda_id": tienda.id,
+                "is_deleted": tienda.is_deleted,
+                "activo": tienda.activo,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     def patch(self, request, id):
-        tienda = get_object_or_404(Tienda, id=id)
-        self.check_object_permissions(request, tienda)
+        return self._eliminar(request, id)
 
-        activo = request.data.get('activo', None)
-        if activo is None:
-            return Response(
-                {"error": "'activo' es requerido (true o false)"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    def delete(self, request, id):
+        return self._eliminar(request, id)
 
-        tienda.activo = activo
-        tienda.save()
-
-        User.objects.filter(tienda=tienda).update(is_active=activo)
-
-        mensaje = "Tienda activada correctamente" if activo else "Tienda desactivada correctamente"
-        return Response({"message": mensaje, "tienda_id": tienda.id, "activo": tienda.activo}, status=status.HTTP_200_OK)
+    def post(self, request, id):
+        return self._eliminar(request, id)
 
 
-class HabilitarTiendaEliminada(APIView):
-    """Habilitar tienda eliminada"""
+class RestaurarTiendaEliminada(APIView):
+    """Restaura una tienda eliminada temporalmente: is_deleted=False,
+    activo=True. Los usuarios se dejan como están (desactivados)."""
     permission_classes = [IsAuthenticated, IsAdminTienda]
 
-    def put(self, request, id):
+    def _restaurar(self, request, id):
         tienda = get_object_or_404(Tienda, id=id)
         self.check_object_permissions(request, tienda)
+
+        if not tienda.is_deleted:
+            return Response(
+                {"error": "La tienda no está eliminada temporalmente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         tienda.is_deleted = False
+        tienda.activo = True
         tienda.save()
-        User.objects.filter(tienda=tienda).update(is_active=True)
+
+        # Intencional: NO reactivar usuarios, quedan desactivados.
         return Response(
-            {"message": "Tienda habilitada y usuarios reactivados correctamente."},
-            status=status.HTTP_200_OK
+            {
+                "message": "Tienda restaurada correctamente. Los usuarios permanecen desactivados.",
+                "tienda_id": tienda.id,
+                "is_deleted": tienda.is_deleted,
+                "activo": tienda.activo,
+            },
+            status=status.HTTP_200_OK,
         )
+
+    def put(self, request, id):
+        return self._restaurar(request, id)
+
+    def patch(self, request, id):
+        return self._restaurar(request, id)
+
+    def post(self, request, id):
+        return self._restaurar(request, id)
+
+
+class ToggleActivacionTienda(APIView):
+    """Activa/desactiva tienda sin borrarla.
+
+    POST {"activate": true|false} (se acepta alias "activo"/"is_active"):
+    - activate=false: activo=False + desactiva sus usuarios.
+    - activate=true: activo=True, usuarios se dejan como están.
+    """
+    permission_classes = [IsAuthenticated, IsAdminTienda]
+
+    def _toggle(self, request, id):
+        tienda = get_object_or_404(Tienda, id=id, is_deleted=False)
+        self.check_object_permissions(request, tienda)
+
+        raw = request.data.get(
+            "activate",
+            request.data.get("activo", request.data.get("is_active", None)),
+        )
+        if raw is None:
+            return Response(
+                {"error": "'activate' es requerido (true o false)"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        activar = _parse_bool(raw)
+        if activar is None:
+            return Response(
+                {"error": "'activate' debe ser true o false"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tienda.activo = activar
+        tienda.save(update_fields=["activo"])
+
+        if not activar:
+            User.objects.filter(tienda=tienda).update(is_active=False)
+            mensaje = "Tienda desactivada correctamente y usuarios desactivados."
+        else:
+            # Intencional: al reactivar, los usuarios se dejan como están.
+            mensaje = "Tienda activada correctamente. Los usuarios se dejan como están."
+
+        return Response(
+            {"message": mensaje, "tienda_id": tienda.id, "activo": tienda.activo},
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request, id):
+        return self._toggle(request, id)
+
+    def patch(self, request, id):
+        return self._toggle(request, id)
+
+
+# Aliases retrocompatibles (las rutas antiguas fueron renombradas)
+DeactivateTienda = EliminarTemporalTienda
+HabilitarTiendaEliminada = RestaurarTiendaEliminada
 
 
 # ============================================
@@ -661,3 +770,37 @@ class UpdatePlanSuscripcion(APIView):
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DeletePlanSuscripcion(APIView):
+    """Superuser: eliminar un plan de suscripción.
+
+    Las tiendas que tenían ese plan pasan a plan=null (ilimitado:
+    sin plan no hay bloqueos, ver get_estado_limites con sin_plan=True).
+    """
+    permission_classes = [IsAuthenticated, IsSuperUser]
+
+    def _eliminar(self, request, plan_id):
+        plan = get_object_or_404(PlanSuscripcion, id=plan_id)
+
+        with transaction.atomic():
+            # Tienda.plan es PROTECT, por eso primero se desvincula.
+            liberadas = Tienda.objects.filter(plan=plan).update(plan=None, plan_desde=None)
+            plan_nombre = plan.nombre_plan
+            plan.delete()
+
+        return Response(
+            {
+                "message": f"Plan '{plan_nombre}' eliminado correctamente.",
+                "plan_id": plan_id,
+                "tiendas_liberadas": liberadas,
+                "detalle": "Las tiendas afectadas quedaron con plan=null (ilimitado, sin bloqueos).",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, plan_id):
+        return self._eliminar(request, plan_id)
+
+    def post(self, request, plan_id):
+        return self._eliminar(request, plan_id)

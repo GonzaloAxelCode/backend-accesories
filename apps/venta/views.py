@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 from decimal import Decimal
 from math import ceil
 import json
+import traceback
 
 from django.db import transaction
 from django.db.models import Sum, Count, Q
@@ -200,6 +201,11 @@ class CreateSaleView(APIView):
     def post(self, request):
         try:
             data = request.data
+            # Log de entrada para depurar Bad Request en consola (runserver)
+            try:
+                print(f"\n[CreateSale] POST /api/sales/create/ payload: {json.dumps(data, default=str, ensure_ascii=False)[:4000]}")
+            except Exception:
+                print(f"\n[CreateSale] POST /api/sales/create/ payload (raw): {data}")
             tienda = request.user.tienda
             usuario = request.user
             if tienda is not None:
@@ -388,41 +394,69 @@ class CreateSaleView(APIView):
             return Response(venta_json, status=status.HTTP_201_CREATED)
 
         except StockInsuficienteError as e:
+            print(f"\n[CreateSale][400] Stock insuficiente: {e.errores}")
+            print(traceback.format_exc())
             return Response(
                 {"error": "Stock insuficiente", "detalles": e.errores},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         except InventarioNoEncontradoError as e:
+            print(f"\n[CreateSale][404] {e}")
+            print(traceback.format_exc())
             return Response(
                 {"error": str(e)},
                 status=status.HTTP_404_NOT_FOUND,
             )
         except DatosInvalidosError as e:
+            print(f"\n[CreateSale][400] DatosInvalidosError campo='{e.campo}': {e}")
+            try:
+                print(f"[CreateSale][400] payload: {json.dumps(request.data, default=str, ensure_ascii=False)[:4000]}")
+            except Exception:
+                pass
+            print(traceback.format_exc())
             return Response(
                 {"error": str(e)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         except SunatRechazadoError as e:
+            print(f"\n[CreateSale][422] SUNAT rechazó: codigo={e.cdr_codigo} detalle={e}")
+            print(traceback.format_exc())
             return Response(
                 {"error": "SUNAT rechazó el comprobante", "codigo": e.cdr_codigo, "detalle": str(e)},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
         except SunatError as e:
+            print(f"\n[CreateSale][502] SunatError: {e}")
+            print(traceback.format_exc())
             return Response(
                 {"error": str(e)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         except KeyError as e:
+            print(f"\n[CreateSale][400] Falta campo obligatorio: {e}")
+            try:
+                print(f"[CreateSale][400] payload: {json.dumps(request.data, default=str, ensure_ascii=False)[:4000]}")
+            except Exception:
+                pass
+            print(traceback.format_exc())
             return Response(
                 {"error": f"Falta el campo obligatorio: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         except (ValueError, TypeError) as e:
+            print(f"\n[CreateSale][400] Valor inválido: {e}")
+            try:
+                print(f"[CreateSale][400] payload: {json.dumps(request.data, default=str, ensure_ascii=False)[:4000]}")
+            except Exception:
+                pass
+            print(traceback.format_exc())
             return Response(
                 {"error": f"Valor inválido: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as e:
+            print(f"\n[CreateSale][500] Error interno: {e}")
+            print(traceback.format_exc())
             return Response(
                 {"error": "Error interno del servidor"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
