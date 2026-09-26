@@ -25,6 +25,7 @@ urlpatterns = [
     path("api/",include("apps.guia_remision.urls")),
     path("api/",include("apps.reports.urls")),
     path("api/",include("apps.ganancias.urls")),
+    path("api/whatsapp/", include("apps.whatsapp.urls")),
 ]
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

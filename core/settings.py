@@ -33,6 +33,8 @@ ENVIRONMENT = env
 SUNAT_PHP = os.getenv("SUNAT_PHP", "").strip()
 SUNAT_API_KEY = os.getenv("SUNAT_API_KEY", "").strip()
 
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "gonzafact_webhook_2026")
+
 R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
 # Nombres usados en el .env (con fallback a los nombres antiguos):
 # R2_ENDPOINT / R2_KEY / R2_SECRET / R2_BUCKET / R2_BASE_URL
@@ -110,6 +112,7 @@ INSTALLED_APPS = [
                     "apps.pedidos",
                     "apps.compras",
                     "apps.guia_remision",
+                    "apps.whatsapp",
     "ckeditor",
     "ckeditor_uploader",
     'django.contrib.sites',
