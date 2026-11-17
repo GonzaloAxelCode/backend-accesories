@@ -1,14 +1,10 @@
 from django.urls import path
-from .views import CrearCompraView, ListaComprasView, ActualizarCompraView
+from .views import DetalleCompraView, EliminarCompraView, GuardarCompraView, ListaComprasView, ActualizarArchivosCompraView
 
 urlpatterns = [
-    # Endpoints únicos y simples
-    path('compras/crear/', CrearCompraView.as_view(), name='crear-compra'),
+    path('compras/guardar/', GuardarCompraView.as_view(), name='guardar-compra'),
     path('compras/lista/', ListaComprasView.as_view(), name='lista-compras'),
-    path('compras/actualizar/<int:id>/', ActualizarCompraView.as_view(), name='actualizar-compra'),
-
-    # Aliases legacy (frontend antiguo) -> misma vista unificada
-    path('compras/comprobante/crear/', CrearCompraView.as_view(), name='crear-comprobante-compra'),
-    path('compras/comprobante/lista/', ListaComprasView.as_view(), name='lista-comprobantes-compra'),
-    path('compras/comprobante/actualizar/<int:id>/', ActualizarCompraView.as_view(), name='actualizar-comprobante-compra'),
+    path('compras/<int:id>/', DetalleCompraView.as_view(), name='detalle-compra'),
+    path('compras/<int:id>/archivos/', ActualizarArchivosCompraView.as_view(), name='actualizar-archivos-compra'),
+    path('compras/eliminar/<int:id>/', EliminarCompraView.as_view(), name='eliminar-compra'),
 ]

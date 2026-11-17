@@ -1,91 +1,56 @@
 from django.db import models
-from django.core.validators import FileExtensionValidator
+from decimal import Decimal
 from apps.proveedor.models import Proveedor
 from apps.tienda.models import Tienda
 
 
 class ComprobanteCompra(models.Model):
+    """Registro mínimo de una compra.
+
+    Todo el detalle del comprobante vive en el XML (R2). Aquí solo se guarda
+    lo necesario para consultar su validez en SUNAT + el link al XML.
+    """
+
     TIPO_COMPROBANTE_CHOICES = [
         ('01', 'Factura'),
         ('03', 'Boleta'),
+        ('07', 'Nota de crédito'),
     ]
 
-    FORMA_PAGO_CHOICES = [
-        ('CONTADO', 'Contado'),
-        ('CREDITO', 'Crédito'),
-    ]
-
-    # --- Relaciones ---
     tienda = models.ForeignKey(Tienda, on_delete=models.SET_NULL, null=True)
-    proveedor = models.ForeignKey(Proveedor, on_delete=models.SET_NULL, null=True)
+    proveedor = models.ForeignKey(Proveedor, on_delete=models.SET_NULL, null=True, blank=True)
 
-    # --- Identificación del comprobante ---
+    # Snapshot del RUC emisor: la consulta SUNAT usa este valor aunque el
+    # proveedor se edite o se borre después (SET_NULL).
+    ruc_proveedor = models.CharField(max_length=11, null=True, blank=True)
     tipo_comprobante = models.CharField(max_length=2, choices=TIPO_COMPROBANTE_CHOICES)
     serie = models.CharField(max_length=10)
     correlativo = models.CharField(max_length=20)
 
-    # --- Fechas y condición de pago ---
-    fecha_emision = models.DateField()
-    fecha_vencimiento = models.DateField(null=True, blank=True)
-    forma_pago = models.CharField(
-        max_length=10, choices=FORMA_PAGO_CHOICES, null=True, blank=True
-    )
-
-    # --- Montos ---
-    moneda = models.CharField(max_length=10, default="PEN")
-    gravadas = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    op_exoneradas = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    op_inafectas = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    op_gratuitas = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    dctos_totales = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    icbper = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    igv = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-
-    # --- Datos del proveedor (emisor del comprobante) ---
-    tipo_documento_proveedor = models.CharField(max_length=2, null=True, blank=True)
-    numero_documento_proveedor = models.CharField(max_length=15, null=True, blank=True)
-    nombre_proveedor = models.CharField(max_length=255, null=True, blank=True)
-
-    # --- Trazabilidad / documentos vinculados ---
-    documento_relacionado = models.CharField(max_length=30, null=True, blank=True)
-    enlace_verificacion = models.URLField(max_length=300, null=True, blank=True)
-
-    # --- Archivos ---
-    # Legacy (se mantienen por compatibilidad con registros antiguos).
-    # Lo nuevo va en xml_url / pdf_url / image_url.
-    archivo_xml = models.FileField(
-        upload_to='compras/xml/',
-        validators=[FileExtensionValidator(['xml'])],
-        blank=True,
-        null=True,
-    )
-    archivo_pdf = models.FileField(
-        upload_to='compras/pdf/',
-        validators=[FileExtensionValidator(['pdf'])],
-        blank=True,
-        null=True,
-    )
-
-    # --- URLs de archivos (unificado: manual o subida de xml/pdf/foto) ---
-    # Null si el usuario no sube nada (formulario manual puro).
-    xml_url = models.URLField(max_length=500, null=True, blank=True)
+    # Archivos en R2 (carpeta por comprobante).
+    # Constancia de validación SUNAT (la genera el flujo guardar).
+    xml_constancia = models.URLField(max_length=500, null=True, blank=True)
+    # XML real del proveedor (lo adjunta el usuario, se valida que corresponda).
+    xml_comprobante = models.URLField(max_length=500, null=True, blank=True)
+    # PDF del proveedor.
     pdf_url = models.URLField(max_length=500, null=True, blank=True)
-    image_url = models.URLField(max_length=500, null=True, blank=True)
 
-    # --- Detalle (se mantiene como JSON, sin cambios) ---
-    items = models.JSONField(default=list, blank=True)
+    # Monto total del comprobante (declarado por el usuario desde su PDF).
+    total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
 
-    observaciones = models.TextField(blank=True, null=True)
+    # Último estado SUNAT conocido ("0001" = existe y aceptado).
+    estado_codigo = models.CharField(max_length=10, null=True, blank=True)
+    estado_descripcion = models.CharField(max_length=255, null=True, blank=True)
+
     date_created = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 
     def save(self, *args, **kwargs):
-        # Normalizar para que el constraint único no se evada con
-        # "f001" vs "F001" o espacios laterales.
         if self.serie:
             self.serie = self.serie.strip().upper()
         if self.correlativo:
             self.correlativo = self.correlativo.strip()
+        if self.ruc_proveedor:
+            self.ruc_proveedor = self.ruc_proveedor.strip()
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -94,10 +59,8 @@ class ComprobanteCompra(models.Model):
     class Meta:
         ordering = ["-date_created"]
         constraints = [
-            # Sin series ni correlativos repetidos: el comprobante es único
-            # por (tienda, tipo, serie, correlativo).
             models.UniqueConstraint(
-                fields=["tienda", "tipo_comprobante", "serie", "correlativo"],
-                name="uq_compra_tienda_tipo_serie_corr",
+                fields=["tienda", "ruc_proveedor", "tipo_comprobante", "serie", "correlativo"],
+                name="uq_compra_tienda_ruc_tipo_serie_corr",
             ),
         ]

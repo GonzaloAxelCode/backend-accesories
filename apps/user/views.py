@@ -6,6 +6,7 @@ from rest_framework.response import Response
 
 from apps.tienda.models import Tienda
 from apps.tienda.serializers import TiendaSerializer
+from apps.user.permissions_catalog import ALL_PERMISSIONS as ALL_PERMISSIONS_CATALOG
 from core.permissions import IsSuperUser, IsAdminTienda
 from .models import UserAccount
 from .serializers import CustomTokenObtainPairSerializer, UserAccountSerializer, UserSerializer
@@ -76,39 +77,12 @@ class GetAllUsersAPIView(APIView):
             users_qs = UserAccount.objects.exclude(id=authenticated_user.id).filter(is_superuser=False, is_deleted=False, tienda_id=tienda_id)
             include_self = False
         users = users_qs
-        ALL_PERMISSIONS = [
-            "can_make_sale",
-            "can_cancel_sale",
-            "can_create_inventory",
-            "can_modify_inventory",
-            "can_update_inventory",
-            "can_delete_inventory",
-            "can_create_product",
-            "can_update_product",
-            "can_delete_product",
-            "can_create_category",
-            "can_modify_category",
-            "can_delete_category",
-            "can_create_supplier",
-            "can_modify_supplier",
-            "can_delete_supplier",
-            "can_create_store",
-            "can_modify_store",
-            "can_delete_store",
-            "view_sale",
-            "view_inventory",
-            "view_product",
-            "view_category",
-            "view_supplier",
-            "view_store",
-            "can_create_user",
-            "can_create_proveedor",
-            "can_update_proveedor",
-            "can_delete_proveedor",
-        ]
+        # Catálogo único: ver apps/user/permissions_catalog.py
+        ALL_PERMISSIONS = list(ALL_PERMISSIONS_CATALOG)
 
         all_system_permissions = Permission.objects.filter(codename__in=ALL_PERMISSIONS)
 
+        tienda_obj = Tienda.objects.get(id=tienda_id)
         users_data = []
 
         for user in users:
@@ -123,6 +97,15 @@ class GetAllUsersAPIView(APIView):
             is_self = (user.id == authenticated_user.id)  # type: ignore
             # Solo si es admin_tienda y es él mismo, deshabilitar edición de permisos
             can_modify_permissions = not (include_self and is_self)
+
+            if user.is_superuser:
+                rol_list = "superuser"
+            elif tienda_obj.propietario_id is not None and tienda_obj.propietario_id == user.id:
+                rol_list = "admin_tienda"
+            elif user.es_empleado:
+                rol_list = "empleado"
+            else:
+                rol_list = "usuario"
 
             user_data = {
                 "id": user.id, # type: ignore
@@ -145,6 +128,8 @@ class GetAllUsersAPIView(APIView):
                 "is_self": is_self,
                 "can_modify_permissions": can_modify_permissions,
                 "disabled": is_self and include_self,  # para atenuar en gris en frontend
+                "rol": rol_list,
+                "es_propietario": rol_list == "admin_tienda",
             }
 
             users_data.append(user_data)
@@ -162,36 +147,8 @@ class GetCurrentUserAPIView(APIView):
         user = get_object_or_404(UserAccount, id=request.user.id)
 
         # 🔹 1. Definir permisos manualmente (solo codenames)
-        ALL_PERMISSIONS = [
-            "can_make_sale",
-            "can_cancel_sale",
-            "can_create_inventory",
-            "can_modify_inventory",
-            "can_update_inventory",
-            "can_delete_inventory",
-            "can_create_product",
-            "can_update_product",
-            "can_delete_product",
-            "can_create_category",
-            "can_modify_category",
-            "can_delete_category",
-            "can_create_supplier",
-            "can_modify_supplier",
-            "can_delete_supplier",
-            "can_create_store",
-            "can_modify_store",
-            "can_delete_store",
-            "view_sale",
-            "view_inventory",
-            "view_product",
-            "view_category",
-            "view_supplier",
-            "view_store",
-            "can_create_user",
-            "can_create_proveedor",
-            "can_update_proveedor",
-            "can_delete_proveedor",
-        ]
+        # Catálogo único: ver apps/user/permissions_catalog.py
+        ALL_PERMISSIONS = list(ALL_PERMISSIONS_CATALOG)
 
         # 🔹 2. Obtener todos los permisos del usuario
         user_permissions_full = user.get_all_permissions()
@@ -339,36 +296,8 @@ class CreateUserInTiendaAPIView(APIView):
             tienda.save(update_fields=["propietario"])
 
         # 🔹 Definir los permisos (igual que en GetCurrentUserAPIView)
-        ALL_PERMISSIONS = [
-            "can_make_sale",
-            "can_cancel_sale",
-            "can_create_inventory",
-            "can_modify_inventory",
-            "can_update_inventory",
-            "can_delete_inventory",
-            "can_create_product",
-            "can_update_product",
-            "can_delete_product",
-            "can_create_category",
-            "can_modify_category",
-            "can_delete_category",
-            "can_create_supplier",
-            "can_modify_supplier",
-            "can_delete_supplier",
-            "can_create_store",
-            "can_modify_store",
-            "can_delete_store",
-            "view_sale",
-            "view_inventory",
-            "view_product",
-            "view_category",
-            "view_supplier",
-            "view_store",
-            "can_create_user",
-            "can_create_proveedor",
-            "can_update_proveedor",
-            "can_delete_proveedor",
-        ]
+        # Catálogo único: ver apps/user/permissions_catalog.py
+        ALL_PERMISSIONS = list(ALL_PERMISSIONS_CATALOG)
 
         # 🔹 Obtener los permisos reales del nuevo usuario
         user_permissions_full = user.get_all_permissions()  # type: ignore
@@ -518,10 +447,7 @@ class UpdateUserPermissionsViewLOTE(APIView):
     permission_classes = [IsAuthenticated,IsAdminTienda]
     def put(self, request, user_id):
         try:
-            print("******** antes ")
             user = UserAccount.objects.get(id=user_id)
-            print(user.user_permissions.values_list("codename", flat=True))
-            print("******** despues ")
             # Validar scope admin_tienda si no es superuser
             if not request.user.is_superuser:
                 is_admin = request.user.tienda and request.user.tienda.propietario_id == request.user.id  # type: ignore
@@ -559,7 +485,6 @@ class UpdateUserPermissionsViewLOTE(APIView):
         # Confirmar permisos actualizados
         updated_permissions = user.user_permissions.values_list("codename", flat=True)
         user.save()
-        print(user.user_permissions.values_list("codename", flat=True))
         return Response({
             "message": "Permisos actualizados correctamente.",
             "updated_permissions": list(updated_permissions),

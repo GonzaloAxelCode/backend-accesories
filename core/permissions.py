@@ -14,15 +14,20 @@ from rest_framework import permissions
 
 
 class HasCustomPermission(permissions.BasePermission):
-    
+    """Permiso por codename. Superuser y propietario de la tienda siempre pasan."""
+
     perm_code = None  # ejemplo: 'user.can_create_inventory'
 
     def has_permission(self, request, view):
-        return (
-            request.user
-            and request.user.is_authenticated
-            and request.user.has_perm(self.perm_code)
-        )
+        u = request.user
+        if not u or not u.is_authenticated:
+            return False
+        if getattr(u, "is_superuser", False):
+            return True
+        tienda = getattr(u, "tienda", None)
+        if tienda is not None and getattr(tienda, "propietario_id", None) == getattr(u, "id", None):
+            return True
+        return u.has_perm(self.perm_code)
         
 class CanMakeSalePermission(HasCustomPermission):
     perm_code = 'user.can_make_sale'
@@ -107,8 +112,67 @@ class CanDeleteProveedorPermission(HasCustomPermission):
 
 
 # ============================================
-# PERMISO COMBINADO: SUPERUSER + ADMIN TIENDA
+# PERMISOS POR MÓDULO (catálogo: apps/user/permissions_catalog.py)
+# Superuser y propietario de la tienda siempre pasan.
 # ============================================
+
+class PermisoEnTienda(permissions.BasePermission):
+    """Base: permite si el usuario tiene ALGUNO de los codenames indicados."""
+
+    codenames: tuple = ()
+
+    def has_permission(self, request, view):
+        u = request.user
+        if not u or not u.is_authenticated:
+            return False
+        if getattr(u, "is_superuser", False):
+            return True
+        tienda = getattr(u, "tienda", None)
+        if tienda is not None and getattr(tienda, "propietario_id", None) == getattr(u, "id", None):
+            return True
+        return any(u.has_perm(f"user.{c}") for c in self.codenames)
+
+
+class PuedeExportarDatos(PermisoEnTienda):
+    """Exportar reportes a CSV (tab Exportar Datos)."""
+
+    codenames = ("can_export_data",)
+
+
+class PuedeHacerBackup(PermisoEnTienda):
+    """Descargar tablas completas y ZIPs de respaldo (módulo Backups)."""
+
+    codenames = ("can_make_backup",)
+
+
+class PuedeCrearCompra(PermisoEnTienda):
+    """Crear compras."""
+
+    codenames = ("can_create_compra",)
+
+
+class PuedeActualizarCompra(PermisoEnTienda):
+    """Modificar compras (incluye subir archivos)."""
+
+    codenames = ("can_update_compra",)
+
+
+class PuedeEliminarCompra(PermisoEnTienda):
+    """Eliminar compras."""
+
+    codenames = ("can_delete_compra",)
+
+
+class PuedeVerGanancias(PermisoEnTienda):
+    """Ver el módulo de ganancias."""
+
+    codenames = ("view_ganancia",)
+
+
+class PuedeExportarOBackup(PermisoEnTienda):
+    """Vistas usadas tanto en Exportar Datos como en Backups (ej: stock bajo)."""
+
+    codenames = ("can_export_data", "can_make_backup")
 
 class IsAdminTienda(permissions.BasePermission):
     """

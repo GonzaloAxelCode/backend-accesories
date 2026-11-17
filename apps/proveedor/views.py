@@ -6,11 +6,10 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.proveedor.models import Proveedor
 from apps.proveedor.serializers import ProveedorSerializer
-from core.permissions import CanCreateProveedorPermission, CanUpdateProveedorPermission
 
 
 class CreateProveedor(APIView):
-    permission_classes = [IsAuthenticated, CanCreateProveedorPermission]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = ProveedorSerializer(data=request.data, context={'request': request})
@@ -40,7 +39,7 @@ class GetAllProveedores(APIView):
 
 
 class UpdateProveedor(APIView):
-    permission_classes = [IsAuthenticated, CanUpdateProveedorPermission]
+    permission_classes = [IsAuthenticated]
 
     def put(self, request, id):
         proveedor = get_object_or_404(Proveedor, id=id, tienda=request.user.tienda)
@@ -54,7 +53,7 @@ class UpdateProveedor(APIView):
 
 
 class ToggleActivarProveedor(APIView):
-    permission_classes = [IsAuthenticated, CanUpdateProveedorPermission]
+    permission_classes = [IsAuthenticated]
 
     def put(self, request, id):
         proveedor = get_object_or_404(Proveedor, id=id, tienda=request.user.tienda)

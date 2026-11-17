@@ -124,6 +124,9 @@ class Pedido(models.Model):
 class PedidoProducto(models.Model):
     pedido = models.ForeignKey(Pedido, on_delete=models.CASCADE)
     producto = models.ForeignKey(Producto, on_delete=models.SET_NULL, null=True, blank=True)
+    celular = models.ForeignKey("celular.Celular", on_delete=models.SET_NULL, null=True, blank=True)
+    imei = models.CharField(max_length=20, null=True, blank=True)
+    descripcion = models.TextField(null=True, blank=True)
     cantidad = models.IntegerField()
     stock_disponible = models.BooleanField(default=True)
     valor_unitario = models.DecimalField(max_digits=10, decimal_places=2)

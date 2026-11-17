@@ -352,3 +352,168 @@ class RegistrarNotaCreditoView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+def _build_emisor_solicitante(tienda):
+    """Mismo objeto emisor que las otras rutas (aquí solo se usa ruc + SOL)."""
+    return {
+        "claveSol": tienda.sol_password,
+        "userSol": tienda.sol_user,
+        "certPriv": tienda.cert_clave_privada,
+        "certPublic": tienda.cert_clave_publica,
+        "ruc": tienda.ruc,
+        "razonSocial": tienda.razon_social,
+        "nombreComercial": tienda.nombre,
+        "ubigeo": "150101",
+        "departamento": "LIMA",
+        "provincia": "LIMA",
+        "distrito": "LIMA",
+        "urbanizacion": "-",
+        "direccion": tienda.direccion or "-",
+    }
+
+
+def _validar_datos_compra(data):
+    ruc_proveedor = str(data.get("rucProveedor") or "").strip()
+    tipo_doc = str(data.get("tipoDoc") or "").strip()
+    serie = str(data.get("serie") or "").strip().upper()
+    correlativo = data.get("correlativo")
+
+    if not ruc_proveedor.isdigit() or len(ruc_proveedor) != 11:
+        return None, "rucProveedor debe tener 11 dígitos"
+    if tipo_doc not in ("01", "03", "07"):
+        return None, "tipoDoc inválido (01, 03, 07)"
+    if not serie:
+        return None, "Falta serie"
+    try:
+        numero = int(correlativo)
+    except (TypeError, ValueError):
+        return None, "correlativo inválido"
+    if numero <= 0:
+        return None, "correlativo inválido"
+    return {"rucProveedor": ruc_proveedor, "tipoDoc": tipo_doc, "serie": serie, "correlativo": numero}, None
+
+
+def _xml_to_dict(xml_text):
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml_text)
+    return {child.tag: (child.text or "") for child in root}
+
+
+class ValidarCompraView(APIView):
+    """Solo valida un comprobante de compra contra SUNAT. No guarda nada.
+
+    POST { rucProveedor, tipoDoc, serie, correlativo }
+    Respuesta lista para Angular: { success, valido, codigo, mensaje, detalle, ... }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        tienda = request.user.tienda
+        if not SUNAT_PHP:
+            return Response({"error": "SUNAT_PHP no configurado"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if not (tienda.ruc and tienda.sol_user and tienda.sol_password):
+            return Response(
+                {"error": "La tienda no tiene RUC o credenciales SOL configuradas"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        datos, error = _validar_datos_compra(request.data)
+        if error:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+
+        payload = {"emisor": _build_emisor_solicitante(tienda), **datos}
+        php_url = f"{SUNAT_PHP.rstrip('/')}/src/api/compra-validar-post.php"
+
+        try:
+            resp = requests.post(
+                php_url,
+                json=payload,
+                headers={"Content-Type": "application/json", "X-API-Key": SUNAT_API_KEY},
+                timeout=25,
+            )
+        except requests.RequestException as e:
+            return Response({"error": "No se pudo conectar al servicio SUNAT", "detalle": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        try:
+            parsed = _xml_to_dict(resp.text)
+        except Exception:
+            return Response(
+                {"error": "El servicio SUNAT no devolvió XML válido", "detalle": resp.text[:1000], "status_php": resp.status_code},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        ok = parsed.get("success") == "true"
+        # PHP decide la validez (0001 = existe y aceptado); fallback por compatibilidad.
+        valido_raw = parsed.get("valido", "")
+        if valido_raw != "":
+            valido = valido_raw == "true"
+        else:
+            valido = ok and parsed.get("codigo", "") == "0001"
+        return Response(
+            {
+                "success": ok,
+                "valido": valido,
+                "solicitante_ruc": tienda.ruc,
+                "ruc_proveedor": parsed.get("rucProveedor", ""),
+                "tipo_doc": parsed.get("tipoDoc", ""),
+                "serie": parsed.get("serie", ""),
+                "correlativo": parsed.get("correlativo", ""),
+                "codigo": parsed.get("codigo", ""),
+                "mensaje": parsed.get("mensaje", parsed.get("message", "")),
+                "detalle": parsed.get("detalle", ""),
+                "detalle": parsed.get("detalle", ""),
+            },
+            status=status.HTTP_200_OK if ok else status.HTTP_400_BAD_REQUEST,
+        )
+
+
+class GuardarCompraView(APIView):
+    """Valida contra SUNAT y guarda solo el XML del CDR en R2.
+
+    POST { rucProveedor, tipoDoc, serie, correlativo }
+    Respuesta lista para Angular: { success, comprobante, estado_codigo, xml_url }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        tienda = request.user.tienda
+        if not SUNAT_PHP:
+            return Response({"error": "SUNAT_PHP no configurado"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if not (tienda.ruc and tienda.sol_user and tienda.sol_password):
+            return Response(
+                {"error": "La tienda no tiene RUC o credenciales SOL configuradas"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        datos, error = _validar_datos_compra(request.data)
+        if error:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+
+        payload = {"emisor": _build_emisor_solicitante(tienda), "tienda": tienda.nombre, **datos}
+        php_url = f"{SUNAT_PHP.rstrip('/')}/src/api/compra-guardar-post.php"
+
+        try:
+            resp = requests.post(
+                php_url,
+                json=payload,
+                headers={"Content-Type": "application/json", "X-API-Key": SUNAT_API_KEY},
+                timeout=25,
+            )
+        except requests.RequestException as e:
+            return Response({"error": "No se pudo conectar al servicio SUNAT", "detalle": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        try:
+            body = resp.json()
+        except Exception:
+            return Response(
+                {"error": "El servicio SUNAT no devolvió JSON válido", "detalle": resp.text[:1000], "status_php": resp.status_code},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        if resp.status_code != 200 or not body.get("success"):
+            return Response(body, status=status.HTTP_400_BAD_REQUEST)
+        body["solicitante_ruc"] = tienda.ruc
+        return Response(body, status=status.HTTP_201_CREATED)

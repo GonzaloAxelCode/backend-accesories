@@ -99,7 +99,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         data["es_empleado"] = self.user.es_empleado # type: ignore
         data["user"] = self.user
         data["tienda_data"] = self.user.tienda # type: ignore
-        print(data)  
         return data
 class UpdatePasswordAPIView(APIView):
     def put(self, request, user_id):

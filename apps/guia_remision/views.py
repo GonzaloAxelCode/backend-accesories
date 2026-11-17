@@ -92,7 +92,6 @@ def _post_a_sunat(payload, serie, correlativo):
     - Si todo ok: error es None.
     """
     url = f"{SUNAT_PHP.rstrip('/')}/src/api/guia-remision-post.php"
-    _log_guia(f"SEND {serie}-{correlativo} -> {url}")
     try:
         resp = requests.post(
             url,
@@ -129,10 +128,6 @@ def _post_a_sunat(payload, serie, correlativo):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    _log_guia(
-        f"OK {serie}-{correlativo}: guia={data_php.get('guia')} "
-        f"ambiente={data_php.get('ambiente')}"
-    )
     return data_php, None
 
 

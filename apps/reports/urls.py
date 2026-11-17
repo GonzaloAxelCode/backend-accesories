@@ -1,5 +1,21 @@
 from django.urls import path
 from apps.reports.views import DailySummaryReportView, MonthlyReportView, PaymentMethodsByDateRangeView, TopProductsReportView, TopCategoriesReportView, DailyPaymentMethodsReportView, DailyPeakHoursReportView, DailyTopProductsReportView, DailyTopCategoriesReportView, DailyRecentSalesReportView, DailyCustomersReportView, MonthlyCustomersReportView, DailyCancelledSalesReportView, CancelledSalesByDateRangeView, ClientsSalesHistoryReportView
+from apps.reports.exports import (
+    ExportAnuladasView,
+    ExportClientesTablaView,
+    ExportClientesView,
+    ExportComprasZipView,
+    ExportComprobantesZipView,
+    ExportGananciasView,
+    ExportInventarioView,
+    ExportMetodosPagoView,
+    ExportStockBajoView,
+    ExportTopCategoriasView,
+    ExportTopProductosView,
+    ExportVentasMensualView,
+    ExportVentasView,
+    ResumenAnualView,
+)
 
 urlpatterns = [
     path("reports/daily-summary/", DailySummaryReportView.as_view(), name="daily-summary-report"),
@@ -17,4 +33,20 @@ urlpatterns = [
     path("reports/daily-cancelled-sales/", DailyCancelledSalesReportView.as_view(), name="daily-cancelled-sales-report"),
     path("reports/cancelled-sales-range/", CancelledSalesByDateRangeView.as_view(), name="cancelled-sales-range-report"),
     path("reports/clients-sales-history/", ClientsSalesHistoryReportView.as_view(), name="clients-sales-history-report"),
+    path("reports/export/inventario/", ExportInventarioView.as_view(), name="export-inventario"),
+    path("reports/export/ventas/", ExportVentasView.as_view(), name="export-ventas"),
+    path("reports/export/ventas-mensual/", ExportVentasMensualView.as_view(), name="export-ventas-mensual"),
+    path("reports/export/ganancias/", ExportGananciasView.as_view(), name="export-ganancias"),
+    path("reports/export/top-productos/", ExportTopProductosView.as_view(), name="export-top-productos"),
+    path("reports/export/top-categorias/", ExportTopCategoriasView.as_view(), name="export-top-categorias"),
+    path("reports/export/metodos-pago/", ExportMetodosPagoView.as_view(), name="export-metodos-pago"),
+    path("reports/export/clientes/", ExportClientesView.as_view(), name="export-clientes"),
+    path("reports/export/anuladas/", ExportAnuladasView.as_view(), name="export-anuladas"),
+    path("reports/export/stock-bajo/", ExportStockBajoView.as_view(), name="export-stock-bajo"),
+    path("reports/export/comprobantes-zip/", ExportComprobantesZipView.as_view(), name="export-comprobantes-zip"),
+    path("reports/export/compras-zip/", ExportComprasZipView.as_view(), name="export-compras-zip"),
+    path("reports/export/clientes-tabla/", ExportClientesTablaView.as_view(), name="export-clientes-tabla"),
+    path("reports/resumen-anual/", ResumenAnualView.as_view(), name="resumen-anual"),
+    # Alias bajo /export/ para consistencia con el resto de exports (el frontend lo usó así un tiempo).
+    path("reports/export/resumen-anual/", ResumenAnualView.as_view(), name="resumen-anual-export-alias"),
 ]

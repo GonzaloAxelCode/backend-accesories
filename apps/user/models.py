@@ -4,6 +4,7 @@ from django.db import models
 from django.utils import timezone
 from apps import tienda
 from apps.tienda.models import Tienda
+from apps.user.permissions_catalog import PERMISSIONS_META
 
 
 def default_modulos_habilitados():
@@ -84,36 +85,7 @@ class UserAccount(AbstractBaseUser, PermissionsMixin):
     REQUIRED_FIELDS = ["first_name","last_name"]
 
     class Meta:
-        permissions = [
-            ("can_make_sale", "Puede hacer una venta"),
-            ("can_cancel_sale", "Puede cancelar una venta"),
-            ("can_create_inventory", "Puede crear inventario"),
-            ("can_modify_inventory", "Puede modificar inventario"),
-            ("can_update_inventory", "Puede actualizar inventario"),
-            ("can_delete_inventory", "Puede eliminar inventario"),
-            ("can_create_product", "Puede crear un producto"),
-            ("can_update_product", "Puede actualizar un producto"),
-            ("can_delete_product", "Puede eliminar un producto"),
-            ("can_create_category", "Puede crear una categoría"),
-            ("can_modify_category", "Puede modificar una categoría"),
-            ("can_delete_category", "Puede eliminar una categoría"),
-            ("can_create_supplier", "Puede crear proveedores"),
-            ("can_modify_supplier", "Puede modificar proveedores"),
-            ("can_delete_supplier", "Puede eliminar proveedores"),
-            ("can_create_store", "Puede crear una tienda"),
-            ("can_modify_store", "Puede modificar una tienda"),
-            ("can_delete_store", "Puede eliminar una tienda"),
-            ("view_sale", "Puede ver las ventas"),
-            ("view_inventory", "Puede ver el inventario"),
-            ("view_product", "Puede ver los productos"),
-            ("view_category", "Puede ver las categorías"),
-            ("view_supplier", "Puede ver los proveedores"),
-            ("view_store", "Puede ver las tiendas"),
-            ("can_create_user", "Puede crear nuevos usuarios"),
-            ("can_create_proveedor", "Puede crear un proveedor"),
-            ("can_update_proveedor", "Puede actualizar un proveedor"),
-            ("can_delete_proveedor", "Puede eliminar un proveedor"),
-        ]
+        permissions = PERMISSIONS_META
         ordering = ["-date_created"]  # 👈 orden descendente por defecto (más recientes primero)
 
 

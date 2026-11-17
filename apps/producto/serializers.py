@@ -39,14 +39,24 @@ class ProductoSerializer(serializers.ModelSerializer):
         return obj.categoria.nombre if obj.categoria else "Sin categoria"
 
     def get_is_inventario(self, obj):
-        from apps.inventario.models import Inventario  
-        return Inventario.objects.filter(producto=obj).exists()
+        from apps.inventario.models import Inventario
+        qs = Inventario.objects.filter(producto=obj, activo=True)
+        request = self.context.get("request") if hasattr(self, "context") else None
+        tienda = getattr(request.user, "tienda", None) if request else None
+        if tienda:
+            qs = qs.filter(tienda=tienda)
+        return qs.exists()
 
     def get_inventario(self, obj):
         from apps.inventario.models import Inventario
         from apps.inventario.serializers import InventarioSerializer
-        
-        inventario = Inventario.objects.filter(producto=obj).first()
+
+        qs = Inventario.objects.filter(producto=obj, activo=True)
+        request = self.context.get("request") if hasattr(self, "context") else None
+        tienda = getattr(request.user, "tienda", None) if request else None
+        if tienda:
+            qs = qs.filter(tienda=tienda)
+        inventario = qs.order_by("-date_created", "-id").first()
         return InventarioSerializer(inventario).data if inventario else None
 
     # ------------------------
@@ -127,12 +137,22 @@ class ProductoDetalleCompletoSerializer(serializers.ModelSerializer):
         return obj.tienda.nombre if obj.tienda else "Sin tienda"
 
     def get_is_inventario(self, obj):
-        from apps.inventario.models import Inventario  
-        return Inventario.objects.filter(producto=obj).exists()
+        from apps.inventario.models import Inventario
+        qs = Inventario.objects.filter(producto=obj, activo=True)
+        request = self.context.get("request") if hasattr(self, "context") else None
+        tienda = getattr(request.user, "tienda", None) if request else None
+        if tienda:
+            qs = qs.filter(tienda=tienda)
+        return qs.exists()
 
     def get_inventarios(self, obj):
         from apps.inventario.models import Inventario
         from apps.inventario.serializers import InventarioSerializer
-        
-        inventarios = Inventario.objects.filter(producto=obj, activo=True)
+
+        qs = Inventario.objects.filter(producto=obj, activo=True)
+        request = self.context.get("request") if hasattr(self, "context") else None
+        tienda = getattr(request.user, "tienda", None) if request else None
+        if tienda:
+            qs = qs.filter(tienda=tienda)
+        inventarios = qs.order_by("-date_created", "-id")
         return InventarioSerializer(inventarios, many=True).data if inventarios.exists() else []

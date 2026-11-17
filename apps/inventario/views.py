@@ -7,7 +7,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from math import ceil
 import re
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Sum
 
 from django.contrib.auth import get_user_model
 from apps.inventario.models import Inventario
@@ -96,7 +96,6 @@ class GetAllInventarioAPIView(APIView):
         
         
         serializer = InventarioSerializer(qs, many=True)    
-        print("--------------------------",serializer.data)
 
         return Response({
             
@@ -122,14 +121,6 @@ class GetAllInventarioAPIViewWithpagination(APIView):
         pg = paginator.page  # objeto de paginación real de DRF
 
         # --- respuesta personalizada ---
-        print({
-            "count": pg.paginator.count,
-            "next": pg.next_page_number() if pg.has_next() else None,
-            "previous": pg.previous_page_number() if pg.has_previous() else None,
-           "index_page": pg.number ,  # 👈 base 0 para frontend
-            "length_pages": pg.paginator.num_pages,  # 👈 también base 0
-            "results": serializer.data
-        })
         return Response({
             "count": pg.paginator.count,
             "next": pg.next_page_number()  if pg.has_next()   else None,
@@ -540,6 +531,225 @@ class BuscarInventarioAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+# ---------- RESUMEN TIENDA: TOTALES POR GRUPO + BAJO STOCK / CRÍTICO ----------
+class ResumenTiendaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    # Grupos predefinidos del frontend (ver utils/categorias-predefinidas.ts)
+    TELEFONOS_KEYWORDS = (
+        "sellado", "nuevo", "seminuevo", "reacondicionado",
+        "celular", "telefono", "teléfono", "telefonos", "teléfonos",
+        "equipo", "equipos", "smartphone", "iphone", "celulares",
+    )
+    ACCESORIOS_KEYWORDS = (
+        "funda", "mica", "hidrogel", "cargador", "cable",
+        "audifono", "audífono", "parlante", "smartwatch", "correa",
+        "reloj", "accesorio", "protector", "case", "vidrio",
+        "templado", "cargadores", "cables", "fundas", "micas",
+    )
+    REPUESTOS_KEYWORDS = (
+        "pantalla", "bateria", "batería", "pin de carga", "pin",
+        "centro de carga", "flex", "camara", "cámara", "tapa",
+        "repuesto", "repuestos", "tactil", "táctil", "display",
+    )
+
+    UMBRAL_BAJO_MIN = 1
+    UMBRAL_BAJO_MAX = 3
+    # 0 = agotado, 1-3 = bajo/crítico, 4+ = normal
+
+    @classmethod
+    def _clasificar(cls, categoria_nombre: str | None, categoria_tipo: str | None) -> str:
+        nombre = (categoria_nombre or "").lower()
+        tipo = (categoria_tipo or "").upper()
+        if any(k in nombre for k in cls.TELEFONOS_KEYWORDS):
+            return "telefonos"
+        if any(k in nombre for k in cls.REPUESTOS_KEYWORDS) or tipo == "REPUESTO":
+            return "repuestos"
+        if any(k in nombre for k in cls.ACCESORIOS_KEYWORDS) or tipo == "ACCESORIO":
+            return "accesorios"
+        # Sin categoría o nombre no reconocido -> otros
+        # Si es ACCESORIO genérico sin keyword igual va a accesorios (ya cubierto arriba).
+        if not nombre or nombre in ("desconocido", "sin categoria", "sin categoría"):
+            return "otros"
+        return "otros"
+
+    def get(self, request):
+        from apps.repuesto.models import Repuesto
+        from apps.celular.models import Celular
+        from collections import Counter
+
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        inventarios = (
+            Inventario.objects
+            .filter(tienda=tienda, activo=True)
+            .select_related("producto", "producto__categoria", "repuesto", "repuesto__categoria")
+        )
+
+        def _nuevo_grupo():
+            return {"total": 0, "agotados": 0, "bajo_stock": 0, "critico": 0, "alerta_total": 0, "normal": 0,
+                    "unidades": 0, "valorizacion": 0.0}
+
+        grupos = {
+            "accesorios": _nuevo_grupo(),
+            "telefonos": _nuevo_grupo(),
+            "repuestos": _nuevo_grupo(),
+        }
+        otros = 0
+        otros_agotados = 0
+        otros_bajo = 0
+        agotados = 0
+        critico = 0  # 1-3 unidades
+        bajo_stock = 0  # 1-3 unidades (sin contar agotados); total alerta 0-3 = agotados + bajo
+
+        def _contar_stock(grupo_dict: dict, cantidad: int):
+            if cantidad == 0:
+                grupo_dict["agotados"] += 1
+            elif self.UMBRAL_BAJO_MIN <= cantidad <= self.UMBRAL_BAJO_MAX:
+                grupo_dict["bajo_stock"] += 1
+                grupo_dict["critico"] += 1
+            else:
+                grupo_dict["normal"] += 1
+
+        def _sumar_unidades(grupo_dict: dict, cantidad: int, costo_unitario):
+            """Suma unidades y valorización (costo × cantidad) del grupo."""
+            try:
+                costo = float(costo_unitario or 0)
+            except (TypeError, ValueError):
+                costo = 0.0
+            grupo_dict["unidades"] += cantidad
+            grupo_dict["valorizacion"] = round(grupo_dict.get("valorizacion", 0.0) + costo * cantidad, 2)
+
+        telefonos_por_marca = Counter()
+        repuestos_por_tipo = Counter()
+
+        for inv in inventarios:
+            # Los repuestos se cuentan SOLO desde el modelo Repuesto (ver abajo):
+            # Repuesto.stock es el canónico que muestra el frontend. Contarlos
+            # aquí también los duplicaría en grupos y en globales.
+            if inv.repuesto_id:
+                continue
+            cantidad = inv.cantidad if inv.cantidad is not None else 0
+            if cantidad == 0:
+                agotados += 1
+            elif self.UMBRAL_BAJO_MIN <= cantidad <= self.UMBRAL_BAJO_MAX:
+                critico += 1
+                bajo_stock += 1
+
+            prod = inv.producto
+            cat = getattr(prod, "categoria", None) if prod else None
+            grupo = self._clasificar(
+                getattr(cat, "nombre", None) if cat else None,
+                getattr(cat, "tipo", None) if cat else None,
+            )
+            # Todo Inventario con producto ES un accesorio (Producto == accesorio
+            # en este sistema): sin categoría caía en "otros" y las cards daban mal.
+            if grupo == "otros" and inv.producto_id:
+                grupo = "accesorios"
+            if grupo in grupos:
+                grupos[grupo]["total"] += 1
+                _contar_stock(grupos[grupo], cantidad)
+                _sumar_unidades(grupos[grupo], cantidad, getattr(inv, "costo_compra", 0))
+                if grupo == "telefonos":
+                    marca = (getattr(prod, "marca", None) or "").strip() if prod else ""
+                    telefonos_por_marca[marca or "Sin marca"] += 1
+                elif grupo == "repuestos":
+                    repuestos_por_tipo[(getattr(cat, "nombre", None) or "Sin tipo").strip() or "Sin tipo"] += 1
+            else:
+                otros += 1
+                if cantidad == 0:
+                    otros_agotados += 1
+                elif self.UMBRAL_BAJO_MIN <= cantidad <= self.UMBRAL_BAJO_MAX:
+                    otros_bajo += 1
+
+        repuestos_modelo = Repuesto.objects.filter(
+            tienda=tienda, activo=True, is_deleted=False
+        ).select_related("categoria")
+        repuestos_modelo_total = repuestos_modelo.count()
+        repuestos_agotados = repuestos_modelo.filter(stock=0).count()
+        repuestos_bajo = repuestos_modelo.filter(
+            stock__gte=self.UMBRAL_BAJO_MIN, stock__lte=self.UMBRAL_BAJO_MAX
+        ).count()
+        repuestos_normal = max(0, repuestos_modelo_total - repuestos_agotados - repuestos_bajo)
+        rep_agg = repuestos_modelo.aggregate(u=Sum("stock"), v=Sum("valorizacion"))
+        grupos["repuestos"]["unidades"] += int(rep_agg["u"] or 0)
+        grupos["repuestos"]["valorizacion"] = round(float(rep_agg["v"] or 0), 2)
+
+        for rep_cat_nombre in repuestos_modelo.values_list("categoria__nombre", flat=True):
+            repuestos_por_tipo[(rep_cat_nombre or "Sin tipo").strip() or "Sin tipo"] += 1
+
+        # Celulares (modelo Celular, uno por IMEI): ÚNICA fuente del grupo teléfonos.
+        # Solo se cuentan los DISPONIBLES (disponible=True), sin importar el resto.
+        # Además se informa cuántos NO están disponibles (detalle de la card).
+        celulares_qs = Celular.objects.filter(tienda=tienda, activo=True, is_deleted=False)
+        celulares_total = celulares_qs.filter(disponible=True).count()
+        celulares_no_disp = celulares_qs.filter(disponible=False).count()
+        grupos["telefonos"]["total"] += celulares_total
+        grupos["telefonos"]["normal"] += celulares_total
+        grupos["telefonos"]["unidades"] += celulares_total
+        grupos["telefonos"]["no_disponibles"] = grupos["telefonos"].get("no_disponibles", 0) + celulares_no_disp
+        cel_agg = celulares_qs.filter(disponible=True).aggregate(c=Sum("costo_compra"), v=Sum("precio_venta"))
+        grupos["telefonos"]["valorizacion"] = round(float(cel_agg["c"] or 0), 2)
+        grupos["telefonos"]["venta_potencial"] = round(float(cel_agg["v"] or 0), 2)
+        # agotados/bajo_stock/critico quedan en 0: no disponibles no se cuentan.
+        try:
+            for marca_cel in celulares_qs.filter(disponible=True).values_list("marca", flat=True):
+                telefonos_por_marca[(marca_cel or "Sin marca").strip() or "Sin marca"] += 1
+        except Exception:
+            pass
+
+        # ÚNICA fuente de repuestos: el modelo Repuesto (ver skip de inv.repuesto_id arriba).
+        grupos["repuestos"]["total"] += repuestos_modelo_total
+        grupos["repuestos"]["agotados"] += repuestos_agotados
+        grupos["repuestos"]["bajo_stock"] += repuestos_bajo
+        grupos["repuestos"]["critico"] += repuestos_bajo
+        grupos["repuestos"]["normal"] += repuestos_normal
+        for g in grupos.values():
+            g["alerta_total"] = g["agotados"] + g["bajo_stock"]
+
+        accesorios = grupos["accesorios"]["total"]
+        telefonos = grupos["telefonos"]["total"]
+        total_repuestos = grupos["repuestos"]["total"]
+        agotados_total = agotados + repuestos_agotados
+        # Crítico y Bajo Stock comparten rango 1-3; se exponen ambos por compatibilidad
+        critico_total = critico + repuestos_bajo
+        bajo_stock_total = critico_total
+
+        total_items = accesorios + telefonos + otros + total_repuestos
+
+        return Response({
+            "totales": {
+                "accesorios": accesorios,
+                "telefonos": telefonos,
+                "repuestos": total_repuestos,
+                "otros": otros,
+                "total_items": total_items,
+            },
+            "stock": {
+                "agotados": agotados_total,
+                "bajo_stock": bajo_stock_total,
+                "critico": critico_total,
+                "alerta_total": agotados_total + bajo_stock_total,
+                "umbral_bajo_min": self.UMBRAL_BAJO_MIN,
+                "umbral_bajo_max": self.UMBRAL_BAJO_MAX,
+            },
+            "grupos": grupos,
+            "telefonos_por_marca": [
+                {"marca": marca, "total": total}
+                for marca, total in sorted(telefonos_por_marca.items(), key=lambda x: -x[1])
+            ],
+            "repuestos_por_tipo": [
+                {"tipo": tipo, "total": total}
+                for tipo, total in sorted(repuestos_por_tipo.items(), key=lambda x: -x[1])
+            ],
+        }, status=status.HTTP_200_OK)
+
+
 # ---------- DISTRIBUCIÓN DE STOCK POR NIVEL ----------
 class DistribucionStockView(APIView):
     permission_classes = [IsAuthenticated]
@@ -626,8 +836,8 @@ class ProductosPorRangoPreciosView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-# ---------- VALORIZACIÓN DE INVENTARIOS POR CATEGORÍA ----------
-class ValorizacionInventarioView(APIView):
+# ---------- TOP 10 ACCESORIOS POR COSTO (COMPRA / VENTA) ----------
+class TopProductosCompraView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -638,67 +848,94 @@ class ValorizacionInventarioView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        from django.db.models import Sum
+        # ?tipo=compra|venta  (acepta aliases: costo_compra, costo_venta, precio_venta)
+        raw_tipo = str(request.query_params.get("tipo", "compra") or "compra").strip().lower()
+        if raw_tipo in ("venta", "costo_venta", "precio_venta"):
+            tipo = "venta"
+            orden = "-costo_venta"
+        else:
+            tipo = "compra"
+            orden = "-costo_compra"
 
-        valorizacion = (
+        top_productos = (
             Inventario.objects
-            .filter(tienda=tienda, activo=True)
+            .filter(tienda=tienda, activo=True, producto__isnull=False, producto__categoria__isnull=False)
+            .select_related("producto", "producto__categoria")
+            .order_by(orden, "-id")[:10]
+        )
+
+        productos = []
+        for inv in top_productos:
+            if not inv.producto or not inv.producto.categoria:
+                continue
+            categoria_nombre = inv.producto.categoria.nombre
+            if not categoria_nombre:
+                continue
+            productos.append({
+                "inventario_id": inv.id,
+                "producto": inv.producto.nombre,
+                "sku": inv.producto.sku,
+                "categoria": categoria_nombre,
+                "cantidad": inv.cantidad,
+                "costo_compra": float(inv.costo_compra or 0),
+                "costo_venta": float(inv.costo_venta or 0),
+            })
+
+        return Response({"top_productos_compra": productos, "tipo": tipo}, status=status.HTTP_200_OK)
+
+
+# ---------- VALOR TOTAL EN SOLES POR CATEGORÍA (COMPRA / VENTA) ----------
+class ValorPorCategoriaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tienda = getattr(request.user, "tienda", None)
+        if not tienda:
+            return Response(
+                {"error": "El usuario no tiene una tienda asignada."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        raw_tipo = str(request.query_params.get("tipo", "compra") or "compra").strip().lower()
+        if raw_tipo in ("venta", "costo_venta", "precio_venta"):
+            tipo = "venta"
+            campo_costo = "costo_venta"
+        else:
+            tipo = "compra"
+            campo_costo = "costo_compra"
+
+        from django.db.models import DecimalField, ExpressionWrapper, F, Sum
+        from django.db.models.functions import Coalesce
+
+        valores = (
+            Inventario.objects
+            .filter(tienda=tienda, activo=True, producto__isnull=False, producto__categoria__isnull=False)
             .values("producto__categoria__nombre")
             .annotate(
                 cantidad_productos=Count("id"),
-                total_compra=Sum("costo_compra"),
-                total_venta=Sum("costo_venta")
+                total_unidades=Sum("cantidad"),
+                valor_total=Sum(
+                    ExpressionWrapper(
+                        Coalesce(F(campo_costo), 0) * F("cantidad"),
+                        output_field=DecimalField(max_digits=20, decimal_places=2),
+                    )
+                ),
             )
-            .order_by("producto__categoria__nombre")
+            .order_by("-valor_total")[:10]
         )
 
         categorias = []
-        for item in valorizacion:
-            nombre = item["producto__categoria__nombre"] or "Sin categoría"
+        for item in valores:
+            nombre = item["producto__categoria__nombre"]
+            if not nombre:
+                continue
             categorias.append({
                 "categoria": nombre,
                 "cantidad_productos": item["cantidad_productos"],
-                "total_compra": float(item["total_compra"] or 0),
-                "total_venta": float(item["total_venta"] or 0)
-            })
-
-        return Response({"valorizacion": categorias}, status=status.HTTP_200_OK)
-
-
-# ---------- TOP CATEGORÍAS POR COMPRA ----------
-class TopCategoriasPorCompraView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        tienda = getattr(request.user, "tienda", None)
-        if not tienda:
-            return Response(
-                {"error": "El usuario no tiene una tienda asignada."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        from django.db.models import Sum
-
-        top_categorias = (
-            Inventario.objects
-            .filter(tienda=tienda, activo=True)
-            .values("producto__categoria__nombre")
-            .annotate(
-                total_unidades=Sum("cantidad"),
-                total_gastado=Sum("costo_compra")
-            )
-            .order_by("-total_gastado")[:10]
-        )
-
-        categorias = []
-        for item in top_categorias:
-            nombre = item["producto__categoria__nombre"] or "Sin categoría"
-            categorias.append({
-                "categoria": nombre,
                 "total_unidades": item["total_unidades"] or 0,
-                "total_gastado": float(item["total_gastado"] or 0)
+                "valor_total": float(item["valor_total"] or 0),
             })
 
-        return Response({"top_categorias_compra": categorias}, status=status.HTTP_200_OK)
+        return Response({"valor_por_categoria": categorias, "tipo": tipo}, status=status.HTTP_200_OK)
 
 

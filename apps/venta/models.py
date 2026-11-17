@@ -45,6 +45,9 @@ class Venta(models.Model):
 class VentaProducto(models.Model):
     venta = models.ForeignKey(Venta, on_delete=models.CASCADE)  # Relación con la venta
     producto = models.ForeignKey(Producto, on_delete=models.SET_NULL, null=True, blank=True)  # Si el producto se elimina, queda nulo
+    celular = models.ForeignKey("celular.Celular", on_delete=models.SET_NULL, null=True, blank=True)  # Venta por IMEI
+    imei = models.CharField(max_length=20, null=True, blank=True)  # Snapshot del IMEI vendido
+    descripcion = models.TextField(null=True, blank=True)  # Snapshot de lo enviado a SUNAT (incluye IMEI)
     cantidad = models.IntegerField()
     valor_unitario = models.DecimalField(max_digits=10, decimal_places=2)  # Precio sin IGV
     valor_venta = models.DecimalField(max_digits=10, decimal_places=2)  # Total sin IGV

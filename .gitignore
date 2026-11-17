@@ -21,6 +21,9 @@ media/
 .env
 **/.env
 core/.env
+*.backup
+*.env.backup
+core/.env.*.backup
 
 # Django
 *.sqlite3

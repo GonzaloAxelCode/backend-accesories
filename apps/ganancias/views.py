@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from core.permissions import PuedeVerGanancias
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -17,9 +18,12 @@ ESTADOS_VALIDOS = ["ACEPTADO", "aceptado", "Aceptado"]
 
 
 def _base_qs(tienda):
+    # Ganancias SOLO de accesorios/celulares ya vendidos:
+    # - solo snapshots de productos_json (sin consultar modelos de Celular/Accesorio/Inventario)
+    # - solo ventas no anuladas (sin nota de crédito y estado válido)
     return Venta.objects.filter(
         tienda=tienda, activo=True, estado__in=ESTADOS_VALIDOS
-    )
+    ).exclude(nota_credito__isnull=False)
 
 
 def _parse_fecha(valor):
@@ -71,7 +75,7 @@ class GananciaRangoView(APIView):
     Solo retorna 3 propiedades.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PuedeVerGanancias]
 
     def get(self, request):
         return self._responder(request)
@@ -286,7 +290,7 @@ class TopProductosMesView(APIView):
     descuentos_totales, categoria, cantidad_vendida.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PuedeVerGanancias]
 
     def post(self, request):
         try:

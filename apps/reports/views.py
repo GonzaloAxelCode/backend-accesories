@@ -951,7 +951,28 @@ class TopProductsReportView(APIView):
                         meta[nombre] = {
                             "producto_id": item.get("producto_id"),
                             "sku": item.get("sku"),
+                            "imagen": item.get("imagen") or item.get("img_url") or item.get("producto_imagen"),
                         }
+                    elif not meta[nombre].get("imagen"):
+                        img = item.get("imagen") or item.get("img_url") or item.get("producto_imagen")
+                        if img:
+                            meta[nombre]["imagen"] = img
+
+            # Completar imágenes faltantes con la foto actual del producto
+            try:
+                sin_img = {m["producto_id"] for m in meta.values() if not m.get("imagen") and m.get("producto_id")}
+                img_por_prod = {}
+                if sin_img:
+                    from apps.producto.models import Producto
+                    for pid, img in Producto.objects.filter(id__in=list(sin_img)).values_list("id", "imagen"):
+                        if img:
+                            s = str(img)
+                            img_por_prod[pid] = s if s.startswith("/") else "/media/" + s.lstrip("/")
+                for m in meta.values():
+                    if not m.get("imagen") and m.get("producto_id") in img_por_prod:
+                        m["imagen"] = img_por_prod[m["producto_id"]]
+            except Exception:
+                pass
 
             productos_json = []
             for nombre, cant in sorted(contador.items(), key=lambda x: x[1], reverse=True):
@@ -959,6 +980,7 @@ class TopProductsReportView(APIView):
                     "producto_id": meta[nombre]["producto_id"],
                     "nombre": nombre,
                     "sku": meta[nombre]["sku"],
+                    "imagen": meta[nombre].get("imagen"),
                     "total_unidades": cant,
                     "total_ingresos": round(ingresos.get(nombre, 0.0), 2),
                 })
@@ -1020,7 +1042,7 @@ class TopCategoriesReportView(APIView):
                 comprobante__estado_sunat__in=["ACEPTADO", "aceptado", "Aceptado"],
             ).only("productos_json")
 
-            agrupado = defaultdict(lambda: {"total_unidades": 0, "total_ingresos": 0.0, "nombre": None, "codigo": None})
+            agrupado = defaultdict(lambda: {"total_unidades": 0, "total_ingresos": 0.0, "nombre": None, "codigo": None, "imagenes": [], "pids": []})
 
             for venta in ventas:
                 for item in _parse_productos_json(venta.productos_json):
@@ -1040,8 +1062,40 @@ class TopCategoriesReportView(APIView):
                         agrupado[key]["nombre"] = cat_nombre
                         agrupado[key]["codigo"] = item.get("categoria_codigo") or None
                         agrupado[key]["categoria_id"] = cat_id
+                    # Fotos reales de productos vendidos en esta categoría (máx 4 distintas)
+                    if len(agrupado[key]["imagenes"]) < 4:
+                        img = item.get("imagen") or item.get("img_url") or item.get("producto_imagen")
+                        if img and img not in agrupado[key]["imagenes"]:
+                            agrupado[key]["imagenes"].append(img)
+                    pid = item.get("producto_id")
+                    if pid is not None and pid not in agrupado[key]["pids"]:
+                        agrupado[key]["pids"].append(pid)
 
             sorted_cats = sorted(agrupado.items(), key=lambda x: x[1]["total_ingresos"], reverse=True)
+
+            # Completar con la foto actual de los productos si faltan (máx 4 por categoría)
+            try:
+                todos_pids = []
+                for _, c in sorted_cats:
+                    faltan = 4 - len(c["imagenes"])
+                    if faltan > 0:
+                        todos_pids.extend([p for p in c["pids"] if p is not None])
+                img_por_prod = {}
+                if todos_pids:
+                    from apps.producto.models import Producto
+                    for pid, img in Producto.objects.filter(id__in=list(set(todos_pids))).values_list("id", "imagen"):
+                        if img:
+                            s = str(img)
+                            img_por_prod[pid] = s if s.startswith("/") else "/media/" + s.lstrip("/")
+                for _, c in sorted_cats:
+                    for pid in c["pids"]:
+                        if len(c["imagenes"]) >= 4:
+                            break
+                        img = img_por_prod.get(pid)
+                        if img and img not in c["imagenes"]:
+                            c["imagenes"].append(img)
+            except Exception:
+                pass
 
             categorias_json = []
             for key, cat in sorted_cats:
@@ -1049,6 +1103,7 @@ class TopCategoriesReportView(APIView):
                     "categoria_id": cat.get("categoria_id"),
                     "nombre": cat["nombre"] or "Sin categoría",
                     "codigo": cat["codigo"],
+                    "imagenes": cat["imagenes"][:4],
                     "total_unidades": cat["total_unidades"],
                     "total_ingresos": round(float(cat["total_ingresos"] or 0), 2),
                 })

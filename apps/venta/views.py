@@ -201,11 +201,6 @@ class CreateSaleView(APIView):
     def post(self, request):
         try:
             data = request.data
-            # Log de entrada para depurar Bad Request en consola (runserver)
-            try:
-                print(f"\n[CreateSale] POST /api/sales/create/ payload: {json.dumps(data, default=str, ensure_ascii=False)[:4000]}")
-            except Exception:
-                print(f"\n[CreateSale] POST /api/sales/create/ payload (raw): {data}")
             tienda = request.user.tienda
             usuario = request.user
             if tienda is not None:
@@ -294,10 +289,10 @@ class CreateSaleView(APIView):
                     direccion_cliente=data.get("direccion_cliente"),
                 )
 
-                items_locked = InventarioService.validate_and_lock_stock(data["productos"])
+                items_locked = InventarioService.validate_and_lock_stock(data["productos"], tienda=tienda)
 
-                for item, (inventario, cantidad) in zip(data["productos"], items_locked):
-                    calculo = VentaService.calcular_producto(item, inventario, cantidad)
+                for item, (kind, registro, cantidad) in zip(data["productos"], items_locked):
+                    calculo = VentaService.calcular_producto(item, registro, cantidad)
 
                     VentaService.create_venta_producto(venta, calculo)
 
@@ -731,6 +726,10 @@ class TopProductsByMonthView(APIView):
 
         contador = Counter()
         totales = {}
+        imagenes = {}
+        tipos = {}
+        ids = {}
+        nombres = {}
         for venta in ventas:
             productos = venta.productos_json
             if not productos:
@@ -751,6 +750,29 @@ class TopProductsByMonthView(APIView):
                 nombre = str(nombre).strip()
                 if not nombre:
                     continue
+                # Clasificación: celular si trae celular_id (snapshot _snapshot_celular),
+                # si no es accesorio (venta de inventario/producto).
+                es_celular = item.get("celular_id") is not None
+                tipo = "celular" if es_celular else "accesorio"
+                if es_celular:
+                    clave = f"celular:{item.get('celular_id') or item.get('imei') or nombre}"
+                else:
+                    pid = item.get("producto_id")
+                    clave = f"prod:{pid}" if pid is not None else f"nombre:{nombre}"
+                # Primer nombre/imagen vistos para la clave
+                if clave not in tipos:
+                    tipos[clave] = tipo
+                    ids[clave] = {
+                        "producto_id": item.get("producto_id"),
+                        "celular_id": item.get("celular_id"),
+                        "imei": item.get("imei"),
+                    }
+                img = (item.get("imagen") or item.get("img_url") or item.get("producto_imagen") or "").strip() if isinstance(item.get("imagen") or item.get("img_url") or item.get("producto_imagen"), str) else (item.get("imagen") or item.get("img_url") or item.get("producto_imagen"))
+                if clave not in imagenes and img:
+                    imagenes[clave] = img
+                # nombre visible: para celulares el snapshot ya trae "Marca Modelo ... - IMEI: ..."
+                if clave not in nombres:
+                    nombres[clave] = nombre
                 cant_raw = item.get("cantidad", 0)
                 try:
                     cantidad = int(cant_raw)
@@ -761,7 +783,7 @@ class TopProductsByMonthView(APIView):
                         continue
                 if cantidad <= 0:
                     continue
-                contador[nombre] += cantidad
+                contador[clave] += cantidad
 
                 precio_raw = item.get("precio_unitario")
                 if precio_raw is None:
@@ -809,25 +831,73 @@ class TopProductsByMonthView(APIView):
                         precio = 0.0
 
                 total_linea = round(precio * cantidad, 2)
-                totales[nombre] = totales.get(nombre, 0.0) + total_linea
+                totales[clave] = totales.get(clave, 0.0) + total_linea
 
         productos_data = [
             {
-                "nombre": nombre,
+                "nombre": nombres.get(clave, clave),
                 "cantidad_total_vendida": cantidad,
                 "unidades_vendidas": cantidad,
-                "total_vendido": round(totales.get(nombre, 0.0), 2),
-                "monto_total_vendido": round(totales.get(nombre, 0.0), 2),
+                "total_vendido": round(totales.get(clave, 0.0), 2),
+                "monto_total_vendido": round(totales.get(clave, 0.0), 2),
+                "imagen": imagenes.get(clave),
+                "tipo": tipos.get(clave, "accesorio"),
+                "producto_id": (ids.get(clave) or {}).get("producto_id"),
+                "celular_id": (ids.get(clave) or {}).get("celular_id"),
+                "imei": (ids.get(clave) or {}).get("imei"),
+                "imei2": None,
             }
-            for nombre, cantidad in contador.items()
+            for clave, cantidad in contador.items()
         ]
 
         productos_data.sort(key=lambda x: x["cantidad_total_vendida"], reverse=True)
 
+        # Enriquecer imágenes faltantes con la foto actual (ventas viejas no guardaron snapshot con imagen)
+        # y completar IMEI1/IMEI2 del equipo (los teléfonos se identifican por IMEI, no por stock).
+        try:
+            sin_img_prod = {p["producto_id"] for p in productos_data if not p.get("imagen") and p.get("producto_id")}
+            sin_img_cel = {p["celular_id"] for p in productos_data if not p.get("imagen") and p.get("celular_id")}
+            cels_ids = {p["celular_id"] for p in productos_data if p.get("celular_id")}
+            img_por_prod = {}
+            img_por_cel = {}
+            imei_por_cel = {}
+            if sin_img_prod:
+                from apps.producto.models import Producto
+                for pid, img in Producto.objects.filter(id__in=list(sin_img_prod)).values_list("id", "imagen"):
+                    if img:
+                        s = str(img)
+                        img_por_prod[pid] = s if s.startswith("/") else "/media/" + s.lstrip("/")
+            if cels_ids:
+                from apps.celular.models import Celular
+                for cid, imei1, imei2, img1 in Celular.objects.filter(id__in=list(cels_ids)).values_list("id", "imei1", "imei2", "imagen1"):
+                    imei_por_cel[cid] = (imei1, imei2)
+                    if cid in sin_img_cel and img1:
+                        s = str(img1)
+                        img_por_cel[cid] = s if s.startswith("/") else "/media/" + s.lstrip("/")
+            for p in productos_data:
+                if not p.get("imagen"):
+                    if p.get("producto_id") in img_por_prod:
+                        p["imagen"] = img_por_prod[p["producto_id"]]
+                    elif p.get("celular_id") in img_por_cel:
+                        p["imagen"] = img_por_cel[p["celular_id"]]
+                if p.get("celular_id") in imei_por_cel:
+                    imei1, imei2 = imei_por_cel[p["celular_id"]]
+                    if imei1:
+                        p["imei"] = imei1
+                    if imei2:
+                        p["imei2"] = imei2
+        except Exception:
+            pass
+
+        accesorios = [p for p in productos_data if p["tipo"] != "celular"][:10]
+        celulares = [p for p in productos_data if p["tipo"] == "celular"][:10]
+
         return Response({
             "year": year,
             "month": mes,
-            "results": productos_data,
+            "results": productos_data[:10],
+            "accesorios": accesorios,
+            "celulares": celulares,
         })
 
 
@@ -1078,6 +1148,7 @@ class SearchSalesView(APIView):
         metodo_pago = query.get('metodo_pago')
         tipo_comprobante = query.get('tipo_comprobante')
         tipo_venta = query.get('tipo_venta')
+        buscar_cliente = (query.get('buscar_cliente') or '').strip() if isinstance(query.get('buscar_cliente'), str) else query.get('buscar_cliente')
         nombre_cliente = query.get('nombre_cliente')
         numero_documento_cliente = query.get('numero_documento_cliente')
         numero_comprobante = query.get('numero_comprobante')
@@ -1096,12 +1167,19 @@ class SearchSalesView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             ventas = ventas.filter(tipo_venta__iexact=str(tipo_venta).strip(), total__gt=0)
-        if numero_documento_cliente is not "":
-            ventas = ventas.filter(comprobante__numero_documento_cliente__icontains=numero_documento_cliente, total__gt=0)
+        if buscar_cliente:
+            ventas = ventas.filter(
+                Q(comprobante__nombre_cliente__icontains=buscar_cliente) | Q(nombre_cliente__icontains=buscar_cliente)
+                | Q(comprobante__numero_documento_cliente__icontains=buscar_cliente) | Q(numero_documento_cliente__icontains=buscar_cliente),
+                total__gt=0,
+            )
+        else:
+            if numero_documento_cliente is not "":
+                ventas = ventas.filter(comprobante__numero_documento_cliente__icontains=numero_documento_cliente, total__gt=0)
+            if nombre_cliente is not "":
+                ventas = ventas.filter(comprobante__nombre_cliente__icontains=nombre_cliente, total__gt=0)
         if numero_comprobante is not "":
             ventas = ventas.filter(comprobante__correlativo=numero_comprobante, total__gt=0)
-        if nombre_cliente is not "":
-            ventas = ventas.filter(comprobante__nombre_cliente__icontains=nombre_cliente, total__gt=0)
 
         total_ventas = ventas.count()
         paginator = VentaPagination()
@@ -1210,6 +1288,7 @@ class SalesTotalsView(APIView):
             metodo_pago = val('metodo_pago')
             tipo_comprobante = val('tipo_comprobante')
             tipo_venta = val('tipo_venta')
+            buscar_cliente = val('buscar_cliente')
             nombre_cliente = val('nombre_cliente')
             numero_documento_cliente = val('numero_documento_cliente')
             numero_comprobante = val('numero_comprobante')
@@ -1236,11 +1315,19 @@ class SalesTotalsView(APIView):
                     )
                 ventas = ventas.filter(tipo_venta__iexact=tipo_venta)
 
-            if nombre_cliente:
-                ventas = ventas.filter(nombre_cliente__icontains=nombre_cliente)
- 
-            if numero_documento_cliente:
-                ventas = ventas.filter(numero_documento_cliente__icontains=numero_documento_cliente)
+            if buscar_cliente:
+                # Input único: busca por nombre O por DNI/RUC
+                ventas = ventas.filter(
+                    Q(nombre_cliente__icontains=buscar_cliente)
+                    | Q(numero_documento_cliente__icontains=buscar_cliente)
+                )
+            else:
+                # Compat: filtros separados legacy
+                if nombre_cliente:
+                    ventas = ventas.filter(nombre_cliente__icontains=nombre_cliente)
+
+                if numero_documento_cliente:
+                    ventas = ventas.filter(numero_documento_cliente__icontains=numero_documento_cliente)
  
             # --- Filtros que viven en ComprobanteElectronico (relacionado) ---
             if estado_sunat or numero_comprobante:

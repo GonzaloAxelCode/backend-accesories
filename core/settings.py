@@ -101,6 +101,8 @@ INSTALLED_APPS = [
                     "apps.user",
                     "apps.categoria",
                     "apps.inventario",
+                    "apps.celular",
+                    "apps.repuesto",
                     "apps.cliente",
                     "apps.producto",
                     "apps.proveedor",

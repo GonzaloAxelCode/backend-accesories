@@ -30,7 +30,4 @@ def whatsapp_webhook(request):
         return HttpResponse("Forbidden", status=403)
 
     # POST
-    logger.info("WhatsApp webhook POST: %s", request.data)
-    print(request.data)
-
     return JsonResponse({"status": "ok"})

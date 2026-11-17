@@ -27,7 +27,6 @@ class CrearInventario(APIView):
         try:
             
             data = request.data
-            print(data.get("tienda"))
             producto = get_object_or_404(Producto, id=data.get("producto"))
             tienda = get_object_or_404(Tienda, id=data.get("tienda"))
             proveedor = get_object_or_404(Proveedor, id=data.get("proveedor"))

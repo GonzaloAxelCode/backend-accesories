@@ -4,6 +4,7 @@ from math import ceil
 from zoneinfo import ZoneInfo
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.timezone import make_aware
 
@@ -15,6 +16,76 @@ from rest_framework.pagination import PageNumberPagination
 
 from apps.inventario.models import Inventario
 from .models import Pedido, PedidoProducto
+
+
+def _descripcion_celular_pedido(celular):
+    base = f"{celular.marca} {celular.modelo} {celular.memoria or ''}".strip()
+    base = " ".join(base.split())
+    imeis = f"IMEI: {celular.imei1}"
+    if celular.imei2:
+        imeis += f" / IMEI2: {celular.imei2}"
+    return f"{base} - {imeis}"
+
+
+def _resolver_celular_pedido(item, cantidad, tienda):
+    """Si el item es un celular, lo valida y retorna su spec.
+
+    Retorna (spec|None, error_response|None). spec incluye:
+    celular, imei, nombre, sku, precio (Decimal), stock_ok, imagen_rel.
+    """
+    from apps.celular.models import Celular
+
+    celular_id = item.get("celular_id")
+    if celular_id is None and (item.get("es_celular") or (isinstance(item.get("inventarioId"), str) and str(item.get("inventarioId")).startswith("celular-"))):
+        raw = item.get("celular_id", item.get("celularId", ""))
+        if isinstance(item.get("inventarioId"), str) and str(item.get("inventarioId")).startswith("celular-"):
+            raw = str(item.get("inventarioId")).split("-", 1)[1]
+        try:
+            celular_id = int(raw)
+        except (ValueError, TypeError):
+            return None, Response({"error": f"celular_id inválido: {raw}"}, status=status.HTTP_400_BAD_REQUEST)
+    if celular_id is None:
+        return None, None
+
+    if cantidad != 1:
+        return None, Response({"error": "El celular se vende por unidad (cantidad 1)"}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        celular = Celular.objects.get(id=celular_id, tienda=tienda)
+    except (Celular.DoesNotExist, ValueError, TypeError):
+        return None, Response({"error": f"Celular {celular_id} no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+    if not celular.activo or celular.is_deleted:
+        return None, Response({"error": "El celular ya no está disponible para la venta"}, status=status.HTTP_400_BAD_REQUEST)
+    if not celular.disponible:
+        return None, Response(
+            {"error": f"El celular {celular.marca} {celular.modelo} (IMEI {celular.imei1}) ya fue vendido"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if celular.precio_venta is None:
+        return None, Response(
+            {"error": f"El celular {celular.marca} {celular.modelo} no tiene precio de venta configurado"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        precio = Decimal(str(celular.precio_venta))
+    except (InvalidOperation, ValueError, TypeError) as e:
+        return None, Response({"error": f"Precio inválido para celular {celular_id}: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+    imagen_rel = None
+    try:
+        if celular.imagen1 and hasattr(celular.imagen1, "url") and celular.imagen1:
+            imagen_rel = celular.imagen1.url
+    except Exception:
+        imagen_rel = None
+
+    return {
+        "celular": celular,
+        "imei": celular.imei1,
+        "nombre": _descripcion_celular_pedido(celular),
+        "sku": celular.imei1,
+        "precio": precio,
+        "stock_ok": True,
+        "imagen_rel": imagen_rel,
+    }, None
 
 
 def calcular_fechas_vencimiento(fecha_base):
@@ -203,25 +274,50 @@ class CrearPedidoView(APIView):
                     except (InvalidOperation, ValueError, TypeError):
                         return Response({"error": f"descuento inválido: {raw_desc}"}, status=status.HTTP_400_BAD_REQUEST)
 
-                    try:
-                        inventario = Inventario.objects.get(id=inventario_id)
-                    except Inventario.DoesNotExist:
-                        return Response(
-                            {"error": f"Inventario {inventario_id} no encontrado"},
-                            status=status.HTTP_404_NOT_FOUND,
-                        )
+                    celular_spec, err_resp = _resolver_celular_pedido(item, cantidad, tienda)
+                    if err_resp is not None:
+                        return err_resp
 
-                    if inventario.costo_venta is None:
-                        return Response(
-                            {"error": f"El producto '{inventario.producto.nombre}' no tiene precio de venta configurado"},
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
-                    try:
-                        precio_unitario_original = Decimal(str(inventario.costo_venta))
-                    except (InvalidOperation, ValueError, TypeError) as e:
-                        return Response({"error": f"costo_venta inválido para inventario {inventario_id}: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+                    celular_obj = None
+                    imei_item = None
+                    if celular_spec is not None:
+                        producto_obj = None
+                        celular_obj = celular_spec["celular"]
+                        imei_item = celular_spec["imei"]
+                        nombre_item = celular_spec["nombre"]
+                        sku_item = celular_spec["sku"]
+                        precio_unitario_original = celular_spec["precio"]
+                        stock_ok = celular_spec["stock_ok"]
+                        imagen_rel = celular_spec["imagen_rel"]
+                    else:
+                        try:
+                            inventario = Inventario.objects.get(id=inventario_id)
+                        except Inventario.DoesNotExist:
+                            return Response(
+                                {"error": f"Inventario {inventario_id} no encontrado"},
+                                status=status.HTTP_404_NOT_FOUND,
+                            )
+                        producto_obj = inventario.producto
 
-                    stock_ok = inventario.cantidad >= cantidad
+                        if inventario.costo_venta is None:
+                            return Response(
+                                {"error": f"El producto '{inventario.producto.nombre}' no tiene precio de venta configurado"},
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+                        try:
+                            precio_unitario_original = Decimal(str(inventario.costo_venta))
+                        except (InvalidOperation, ValueError, TypeError) as e:
+                            return Response({"error": f"costo_venta inválido para inventario {inventario_id}: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+                        stock_ok = inventario.cantidad >= cantidad
+                        nombre_item = inventario.producto.nombre
+                        sku_item = getattr(inventario.producto, "sku", None)
+                        imagen_rel = None
+                        try:
+                            if inventario.producto and inventario.producto.imagen:
+                                imagen_rel = inventario.producto.imagen.url
+                        except Exception:
+                            imagen_rel = None
 
                     precio_unitario = precio_unitario_original - (descuento / Decimal(cantidad))
                     valor_unitario = precio_unitario / (Decimal("1.00") + Decimal("0.18"))
@@ -230,7 +326,10 @@ class CrearPedidoView(APIView):
 
                     PedidoProducto.objects.create(
                         pedido=pedido,
-                        producto=inventario.producto,
+                        producto=producto_obj,
+                        celular=celular_obj,
+                        imei=imei_item,
+                        descripcion=nombre_item,
                         cantidad=cantidad,
                         stock_disponible=stock_ok,
                         valor_unitario=valor_unitario,
@@ -251,12 +350,19 @@ class CrearPedidoView(APIView):
                     total += precio_unitario * cantidad
 
                     imagen_url = None
-                    if inventario.producto and inventario.producto.imagen:
-                        imagen_url = request.build_absolute_uri(inventario.producto.imagen.url)
+                    if imagen_rel:
+                        try:
+                            imagen_url = request.build_absolute_uri(imagen_rel) if imagen_rel.startswith("/") else imagen_rel
+                        except Exception:
+                            imagen_url = imagen_rel
 
                     productos_registrados.append({
-                        "producto_id": inventario.producto.id,
-                        "producto_nombre": inventario.producto.nombre,
+                        "producto_id": producto_obj.id if producto_obj else None,
+                        "celular_id": celular_obj.id if celular_obj else None,
+                        "imei": imei_item,
+                        "es_celular": celular_obj is not None,
+                        "producto_nombre": nombre_item,
+                        "sku": sku_item,
                         "cantidad": cantidad,
                         "stock_disponible": stock_ok,
                         "valor_unitario": float(valor_unitario),
@@ -373,6 +479,19 @@ class ListarPedidosView(APIView):
             pedidos = pedidos.filter(fecha_eliminacion__range=_rango_fechas(eliminacion_from, eliminacion_to))
 
         numero_pedido = query.get('numero_pedido')
+        # Búsqueda única: un solo texto contra N° pedido, cliente, DNI/RUC,
+        # teléfono, email y referencia (OR).
+        q = query.get('q')
+        if q is not None and str(q).strip() != "":
+            q = str(q).strip()
+            pedidos = pedidos.filter(
+                Q(numero_pedido__icontains=q)
+                | Q(nombre_cliente__icontains=q)
+                | Q(numero_documento_cliente__icontains=q)
+                | Q(telefono_cliente__icontains=q)
+                | Q(email_cliente__icontains=q)
+                | Q(referencia_externa__icontains=q)
+            )
         metodo_pago = query.get('metodo_pago')
         estado = query.get('estado')
         tipo_pedido = query.get('tipo_pedido')
@@ -635,25 +754,50 @@ class ActualizarPedidoView(APIView):
                         except (InvalidOperation, ValueError, TypeError):
                             return Response({"error": f"descuento inválido: {raw_desc}"}, status=status.HTTP_400_BAD_REQUEST)
 
-                        try:
-                            inventario = Inventario.objects.get(id=inventario_id)
-                        except Inventario.DoesNotExist:
-                            return Response(
-                                {"error": f"Inventario {inventario_id} no encontrado"},
-                                status=status.HTTP_404_NOT_FOUND,
-                            )
+                        celular_spec, err_resp = _resolver_celular_pedido(item, cantidad, pedido.tienda)
+                        if err_resp is not None:
+                            return err_resp
 
-                        if inventario.costo_venta is None:
-                            return Response(
-                                {"error": f"El producto '{inventario.producto.nombre}' no tiene precio de venta configurado"},
-                                status=status.HTTP_400_BAD_REQUEST,
-                            )
-                        try:
-                            precio_unitario_original = Decimal(str(inventario.costo_venta))
-                        except (InvalidOperation, ValueError, TypeError) as e:
-                            return Response({"error": f"costo_venta inválido para inventario {inventario_id}: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+                        celular_obj = None
+                        imei_item = None
+                        if celular_spec is not None:
+                            producto_obj = None
+                            celular_obj = celular_spec["celular"]
+                            imei_item = celular_spec["imei"]
+                            nombre_item = celular_spec["nombre"]
+                            sku_item = celular_spec["sku"]
+                            precio_unitario_original = celular_spec["precio"]
+                            stock_ok = celular_spec["stock_ok"]
+                            imagen_rel = celular_spec["imagen_rel"]
+                        else:
+                            try:
+                                inventario = Inventario.objects.get(id=inventario_id)
+                            except Inventario.DoesNotExist:
+                                return Response(
+                                    {"error": f"Inventario {inventario_id} no encontrado"},
+                                    status=status.HTTP_404_NOT_FOUND,
+                                )
+                            producto_obj = inventario.producto
 
-                        stock_ok = inventario.cantidad >= cantidad
+                            if inventario.costo_venta is None:
+                                return Response(
+                                    {"error": f"El producto '{inventario.producto.nombre}' no tiene precio de venta configurado"},
+                                    status=status.HTTP_400_BAD_REQUEST,
+                                )
+                            try:
+                                precio_unitario_original = Decimal(str(inventario.costo_venta))
+                            except (InvalidOperation, ValueError, TypeError) as e:
+                                return Response({"error": f"costo_venta inválido para inventario {inventario_id}: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+                            stock_ok = inventario.cantidad >= cantidad
+                            nombre_item = inventario.producto.nombre
+                            sku_item = getattr(inventario.producto, "sku", None)
+                            imagen_rel = None
+                            try:
+                                if inventario.producto and inventario.producto.imagen:
+                                    imagen_rel = inventario.producto.imagen.url
+                            except Exception:
+                                imagen_rel = None
 
                         precio_unitario = precio_unitario_original - (descuento / Decimal(cantidad))
                         valor_unitario = precio_unitario / (Decimal("1.00") + Decimal("0.18"))
@@ -662,7 +806,10 @@ class ActualizarPedidoView(APIView):
 
                         PedidoProducto.objects.create(
                             pedido=pedido,
-                            producto=inventario.producto,
+                            producto=producto_obj,
+                            celular=celular_obj,
+                            imei=imei_item,
+                            descripcion=nombre_item,
                             cantidad=cantidad,
                             stock_disponible=stock_ok,
                             valor_unitario=valor_unitario,
@@ -683,12 +830,19 @@ class ActualizarPedidoView(APIView):
                         total += precio_unitario * cantidad
 
                         imagen_url = None
-                        if inventario.producto and inventario.producto.imagen:
-                            imagen_url = request.build_absolute_uri(inventario.producto.imagen.url)
+                        if imagen_rel:
+                            try:
+                                imagen_url = request.build_absolute_uri(imagen_rel) if imagen_rel.startswith("/") else imagen_rel
+                            except Exception:
+                                imagen_url = imagen_rel
 
                         productos_registrados.append({
-                            "producto_id": inventario.producto.id,
-                            "producto_nombre": inventario.producto.nombre,
+                            "producto_id": producto_obj.id if producto_obj else None,
+                            "celular_id": celular_obj.id if celular_obj else None,
+                            "imei": imei_item,
+                            "es_celular": celular_obj is not None,
+                            "producto_nombre": nombre_item,
+                            "sku": sku_item,
                             "cantidad": cantidad,
                             "stock_disponible": stock_ok,
                             "valor_unitario": float(valor_unitario),
@@ -716,7 +870,10 @@ class ActualizarPedidoView(APIView):
                 {
                     "id": p.id,
                     "producto": p.producto.id if p.producto else None,
-                    "producto_nombre": p.producto.nombre if p.producto else None,
+                    "celular_id": p.celular.id if p.celular else None,
+                    "imei": p.imei,
+                    "es_celular": p.celular_id is not None,
+                    "producto_nombre": (p.descripcion or (p.producto.nombre if p.producto else None)),
                     "cantidad": p.cantidad,
                     "valor_unitario": float(p.valor_unitario),
                     "precio_unitario": float(p.precio_unitario),

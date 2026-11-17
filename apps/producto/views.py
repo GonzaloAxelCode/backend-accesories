@@ -27,7 +27,7 @@ from django.db.models import Q
 import re
 from rest_framework.permissions import IsAuthenticated
 
-from core.permissions import CanCreateProductPermission, CanDeleteProductPermission, CanUpdateProductPermission
+from core.permissions import CanCreateInventoryPermission, CanDeleteInventoryPermission, CanModifyInventoryPermission
 
 class ProductoPagination(PageNumberPagination):
     page_size = 5
@@ -100,7 +100,7 @@ def _decode_base64_image(data_uri: str):
 
 
 class CreateProductoAPIViewReactNative(APIView):
-    permission_classes = [IsAuthenticated, CanCreateProductPermission]
+    permission_classes = [IsAuthenticated, CanCreateInventoryPermission]
     parser_classes = [JSONParser]  # ya no se acepta multipart, solo JSON
 
     def post(self, request):
@@ -307,6 +307,10 @@ class BuscarProductoAPIView(APIView):
 
         sku = (query.get('sku') or "").strip()  # 🚨 nuevo campo SKU
 
+        # Búsqueda unificada del input único (nombre o SKU a la vez)
+        q = (query.get('q') or "").strip().lower()
+        q_normalizado = re.sub(r"\s+", " ", q).strip()
+
         categoria = query.get('categoria') or 0
         try:
             categoria = int(categoria)
@@ -318,13 +322,18 @@ class BuscarProductoAPIView(APIView):
         # ----- Filtros -----
         filtros = Q(tienda=tienda)
 
-        if sku:  # 🔎 búsqueda exacta por SKU
-            filtros &= Q(sku__iexact=sku)
-
-        if nombre_normalizado:
-            palabras = nombre_normalizado.split(" ")
+        if q_normalizado:  # 🔎 input único: cada palabra puede estar en SKU, nombre o descripción
+            palabras = q_normalizado.split(" ")
             for palabra in palabras:
-                filtros &= Q(nombre__icontains=palabra) | Q(descripcion__icontains=palabra)
+                filtros &= Q(sku__icontains=palabra) | Q(nombre__icontains=palabra) | Q(descripcion__icontains=palabra)
+        else:
+            if sku:  # 🔎 búsqueda exacta por SKU
+                filtros &= Q(sku__iexact=sku)
+
+            if nombre_normalizado:
+                palabras = nombre_normalizado.split(" ")
+                for palabra in palabras:
+                    filtros &= Q(nombre__icontains=palabra) | Q(descripcion__icontains=palabra)
 
         if categoria > 0:
             filtros &= Q(categoria_id=categoria)
@@ -356,7 +365,7 @@ class BuscarProductoAPIView(APIView):
             "previous": paginator.page.previous_page_number() if paginator.page.has_previous() else None,
             "index_page": paginator.page.number - 1,
             "length_pages": paginator.page.paginator.num_pages -1,
-            "results": ProductoSerializer(result_page, many=True).data,
+            "results": ProductoSerializer(result_page, many=True, context={"request": request}).data,
             "search_products_found": "products_found"
         })
 
@@ -383,7 +392,7 @@ class GetAllProductosAPIViewWithPagination(APIView):
         # Paginación
         paginator = ProductoPagination()
         paginated_products = paginator.paginate_queryset(productos, request)
-        serializer = ProductoSerializer(paginated_products, many=True)
+        serializer = ProductoSerializer(paginated_products, many=True, context={"request": request})
         
         next_page = page_number + 1 if page_number < total_paginas else None
         previous_page = page_number - 1 if page_number > 1 else None
@@ -409,7 +418,7 @@ class GetAllProductosAPIView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         
-        serializer_all = ProductoSerializer(Producto.objects.filter(tienda=tienda,activo=True), many=True)
+        serializer_all = ProductoSerializer(Producto.objects.filter(tienda=tienda,activo=True), many=True, context={"request": request})
        
 
         return Response({
@@ -424,12 +433,12 @@ class GetProductoAPIView(APIView):
     def get(self, request, id):
         tienda = getattr(request.user, "tienda", None)
         producto = get_object_or_404(Producto, id=id, tienda=tienda,activo=True)
-        serializer = ProductoSerializer(producto)
+        serializer = ProductoSerializer(producto, context={"request": request})
         
         return Response(serializer.data, status=status.HTTP_200_OK)
     
 class CreateProductoAPIView(APIView):
-    permission_classes = [IsAuthenticated, CanCreateProductPermission]
+    permission_classes = [IsAuthenticated, CanCreateInventoryPermission]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request):
@@ -581,7 +590,7 @@ class CreateProductoAPIView(APIView):
 
 
 class UpdateProductoAPIView(APIView):
-    permission_classes = [IsAuthenticated, CanUpdateProductPermission]
+    permission_classes = [IsAuthenticated, CanModifyInventoryPermission]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def put(self, request, id):
@@ -744,7 +753,7 @@ class UpdateProductoAPIView(APIView):
 
 # ---------- ELIMINAR PRODUCTO ----------
 class DeleteProductoAPIView(APIView):
-    permission_classes = [IsAuthenticated,CanDeleteProductPermission]
+    permission_classes = [IsAuthenticated, CanDeleteInventoryPermission]
     def delete(self, request, id):
         tienda = getattr(request.user, "tienda", None)
         producto = get_object_or_404(Producto, id=id, tienda=tienda)
@@ -757,7 +766,7 @@ class DeleteProductoAPIView(APIView):
  
         return Response({
             "message": "Producto eliminado exitosamente"
-        }, status=status.HTTP_204_NO_CONTENT)
+        }, status=status.HTTP_200_OK)
 
 
 # ---------- BUSCAR PRODUCTO POR SKU CON DETALLE COMPLETO ----------
@@ -911,7 +920,7 @@ class InventarioNoEncontradoError(Exception):
 
 
 class UpdateProductoAPIViewReactNative(APIView):
-    permission_classes = [IsAuthenticated, CanUpdateProductPermission]
+    permission_classes = [IsAuthenticated, CanModifyInventoryPermission]
     parser_classes = [JSONParser]  # solo JSON, sin multipart
 
     def put(self, request, id):

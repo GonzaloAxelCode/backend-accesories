@@ -3,6 +3,7 @@ from django.db.models import Q
 from rest_framework import serializers
 
 from apps.user.models import UserAccount
+from apps.user.permissions_catalog import ALL_PERMISSIONS as ALL_PERMISSIONS_CATALOG
 from apps.user.serializers import UserSerializer
 from .models import Tienda, PlanSuscripcion, UsoMensualTienda
 
@@ -296,19 +297,8 @@ class TiendaSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
 
-        ALL_PERMISSIONS = [
-            "can_make_sale", "can_cancel_sale",
-            "can_create_inventory", "can_modify_inventory",
-            "can_update_inventory", "can_delete_inventory",
-            "can_create_product", "can_update_product", "can_delete_product",
-            "can_create_category", "can_modify_category", "can_delete_category",
-            "can_create_supplier", "can_modify_supplier", "can_delete_supplier",
-            "can_create_store", "can_modify_store", "can_delete_store",
-            "view_sale", "view_inventory", "view_product",
-            "view_category", "view_supplier", "view_store",
-            "can_create_user",
-            "can_create_proveedor", "can_update_proveedor", "can_delete_proveedor",
-        ]
+        # Catálogo único: ver apps/user/permissions_catalog.py
+        ALL_PERMISSIONS = list(ALL_PERMISSIONS_CATALOG)
 
         # Defensa en profundidad: los secretos SUNAT jamás salen en un GET,
         # ni siquiera para superuser (para soporte, verlos directo en BD/admin).

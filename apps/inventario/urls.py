@@ -8,8 +8,9 @@ from apps.inventario.views import (
     ObtenerInventarioProducto,
     PorcentajeProductosPorCategoriaView,
     ProductosPorRangoPreciosView,
-    TopCategoriasPorCompraView,
-    ValorizacionInventarioView,
+    ResumenTiendaView,
+    TopProductosCompraView,
+    ValorPorCategoriaView,
     ActualizarStock,
     ActualizarInventarioView,
     ProductosConMenorStockView,
@@ -28,8 +29,9 @@ urlpatterns = [
     path('buscar-inventario/', BuscarInventarioAPIView.as_view(), name='buscar-inventario'),
     path('inventarios/porcentaje-por-categoria/', PorcentajeProductosPorCategoriaView.as_view(), name='porcentaje-por-categoria'),
     path('inventarios/distribucion-stock/', DistribucionStockView.as_view(), name='distribucion-stock'),
+    path('inventarios/resumen-tienda/', ResumenTiendaView.as_view(), name='resumen-tienda'),
     path('inventarios/por-rango-precios/', ProductosPorRangoPreciosView.as_view(), name='por-rango-precios'),
-    path('inventarios/valorizacion/', ValorizacionInventarioView.as_view(), name='valorizacion-inventario'),
-    path('inventarios/top-categorias-compra/', TopCategoriasPorCompraView.as_view(), name='top-categorias-compra'),
+    path('inventarios/top-productos-compra/', TopProductosCompraView.as_view(), name='top-productos-compra'),
+    path('inventarios/valor-por-categoria/', ValorPorCategoriaView.as_view(), name='valor-por-categoria'),
 
 ]

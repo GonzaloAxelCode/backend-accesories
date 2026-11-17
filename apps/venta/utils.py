@@ -99,13 +99,49 @@ class ClienteService:
 class InventarioService:
 
     @staticmethod
-    def validate_and_lock_stock(productos_data):
+    def _celular_id_de_item(item):
+        """ID de celular si el item es venta por IMEI (celular_id o inventarioId 'celular-<id>')."""
+        from .exceptions import DatosInvalidosError
+
+        cid = item.get("celular_id")
+        if cid is None and item.get("es_celular"):
+            cid = item.get("celularId")
+        if cid is not None and cid != "":
+            try:
+                return int(cid)
+            except (ValueError, TypeError):
+                raise DatosInvalidosError("celular_id", f"celular_id inválido: {cid}")
+        inv = item.get("inventarioId")
+        if isinstance(inv, str) and inv.startswith("celular-"):
+            try:
+                return int(inv.split("-", 1)[1])
+            except (ValueError, TypeError):
+                raise DatosInvalidosError("inventarioId", f"Referencia de celular inválida: {inv}")
+        return None
+
+    @staticmethod
+    def validate_and_lock_stock(productos_data, tienda=None):
         from .exceptions import InventarioNoEncontradoError, StockInsuficienteError, DatosInvalidosError
 
         items_locked = []
         errores = []
 
         for idx, item in enumerate(productos_data):
+            raw_cant = item.get("cantidad_final")
+            if raw_cant is None or raw_cant == "":
+                raise DatosInvalidosError("cantidad_final", f"Item #{idx+1} sin cantidad")
+            try:
+                cantidad = int(raw_cant)
+            except (ValueError, TypeError):
+                raise DatosInvalidosError("cantidad_final", f"Item #{idx+1} valor inválido: {raw_cant}")
+            if cantidad <= 0:
+                raise DatosInvalidosError("cantidad_final", f"Item #{idx+1} debe ser > 0, recibido {cantidad}")
+
+            celular_id = InventarioService._celular_id_de_item(item)
+            if celular_id is not None:
+                items_locked.append(("celular", InventarioService._lock_celular(idx, celular_id, cantidad, tienda), cantidad))
+                continue
+
             inv_id = item.get("inventarioId")
             if inv_id is None:
                 raise DatosInvalidosError("inventarioId", f"Item #{idx+1} sin inventarioId")
@@ -114,16 +150,6 @@ class InventarioService:
                 inventario = Inventario.objects.select_for_update().get(id=inv_id)
             except Inventario.DoesNotExist:
                 raise InventarioNoEncontradoError(inv_id)
-
-            raw_cant = item.get("cantidad_final")
-            if raw_cant is None or raw_cant == "":
-                raise DatosInvalidosError("cantidad_final", f"Item #{idx+1} (inventario {inv_id}) sin cantidad")
-            try:
-                cantidad = int(raw_cant)
-            except (ValueError, TypeError):
-                raise DatosInvalidosError("cantidad_final", f"Item #{idx+1} valor inválido: {raw_cant}")
-            if cantidad <= 0:
-                raise DatosInvalidosError("cantidad_final", f"Item #{idx+1} debe ser > 0, recibido {cantidad}")
 
             # Validación temprana de precio para dar mensaje claro antes de VentaService
             if inventario.costo_venta is None:
@@ -139,7 +165,7 @@ class InventarioService:
                 )
                 continue
 
-            items_locked.append((inventario, cantidad))
+            items_locked.append(("inventario", inventario, cantidad))
 
         if errores:
             raise StockInsuficienteError(errores)
@@ -147,10 +173,65 @@ class InventarioService:
         return items_locked
 
     @staticmethod
+    def _lock_celular(idx, celular_id, cantidad, tienda=None):
+        """Valida y bloquea un celular para venta por IMEI (unidad única)."""
+        from apps.celular.models import Celular
+        from .exceptions import InventarioNoEncontradoError, StockInsuficienteError, DatosInvalidosError
+
+        if cantidad != 1:
+            raise DatosInvalidosError("cantidad_final", f"Item #{idx+1}: el celular se vende por unidad (cantidad 1)")
+
+        qs = Celular.objects.select_for_update()
+        if tienda is not None and getattr(tienda, "id", None):
+            qs = qs.filter(tienda_id=tienda.id)
+        try:
+            celular = qs.get(id=celular_id)
+        except Celular.DoesNotExist:
+            raise InventarioNoEncontradoError(f"celular-{celular_id}")
+
+        if not celular.activo or celular.is_deleted:
+            raise DatosInvalidosError("celular_id", f"Item #{idx+1}: el celular ya no está disponible para la venta")
+        # Un IMEI vendido no se puede volver a vender, aunque lo reactiven manualmente.
+        if InventarioService._imei_vendido(celular, getattr(tienda, "id", None) if tienda else None):
+            raise StockInsuficienteError([f"El celular con IMEI {celular.imei1} ya fue vendido y no se puede vender de nuevo"])
+        if not celular.disponible:
+            raise StockInsuficienteError([f"El celular {celular.marca} {celular.modelo} (IMEI {celular.imei1}) ya fue vendido"])
+        if celular.precio_venta is None or Decimal(str(celular.precio_venta)) <= 0:
+            raise DatosInvalidosError(
+                "costo_venta",
+                f"El celular {celular.marca} {celular.modelo} (IMEI {celular.imei1}) no tiene precio de venta configurado"
+            )
+        return celular
+
+        if errores:
+            raise StockInsuficienteError(errores)
+
+        return items_locked
+
+    @staticmethod
+    def _imei_vendido(celular, tienda_id=None):
+        """True si alguno de los IMEI actuales ya se vendió (aunque reactiven el equipo)."""
+        from django.db.models import Q
+        from apps.venta.models import VentaProducto
+
+        imeis = [i for i in (celular.imei1, celular.imei2) if i]
+        if not imeis:
+            return False
+        consulta = Q(imei__in=imeis)
+        if tienda_id:
+            consulta &= Q(venta__tienda_id=tienda_id)
+        return VentaProducto.objects.filter(consulta).exists()
+
+    @staticmethod
     def deduct_stock(items_locked):
-        for inventario, cantidad in items_locked:
-            inventario.cantidad -= cantidad
-            inventario.save()
+        for locked in items_locked:
+            kind, registro, cantidad = locked[0], locked[1], locked[2]
+            if kind == "celular":
+                registro.disponible = False
+                registro.save(update_fields=["disponible"])
+            else:
+                registro.cantidad -= cantidad
+                registro.save()
 
 
 class VentaService:
@@ -158,7 +239,7 @@ class VentaService:
     FACTOR_IGV = PORCENTAJE_IGV / Decimal("100.00")
 
     @staticmethod
-    def calcular_producto(item, inventario, cantidad):
+    def calcular_producto(item, registro, cantidad):
         from .exceptions import DatosInvalidosError
 
         # descuento puede venir como None, "", numero o string
@@ -172,6 +253,17 @@ class VentaService:
 
         if descuento < 0:
             raise DatosInvalidosError("descuento", "El descuento no puede ser negativo")
+
+        # ---- Venta por IMEI (celular, unidad única) ----
+        try:
+            from apps.celular.models import Celular
+            es_celular = isinstance(registro, Celular)
+        except Exception:
+            es_celular = False
+        if es_celular:
+            return VentaService._calcular_celular(item, registro, cantidad, descuento)
+
+        inventario = registro
         if inventario.costo_venta is None:
             raise DatosInvalidosError(
                 "costo_venta",
@@ -204,6 +296,8 @@ class VentaService:
         return {
             "producto": inventario.producto,
             "inventario": inventario,
+            "celular": None,
+            "tipo": "inventario",
             "cantidad": cantidad,
             "descuento": descuento,
             "precio_unitario_original": precio_unitario_original,
@@ -214,13 +308,76 @@ class VentaService:
             "costo_compra": costo_compra_snap,
             "categoria_id": cat.id if cat else None,
             "categoria_nombre": cat.nombre if cat else None,
+            "descripcion_sunat": inventario.producto.nombre,
+            "codigo_sunat": inventario.producto.sku,
+        }
+
+    @staticmethod
+    def _descripcion_celular(celular):
+        base = f"{celular.marca} {celular.modelo} {celular.memoria or ''}".strip()
+        base = " ".join(base.split())
+        imeis = f"IMEI: {celular.imei1}"
+        if celular.imei2:
+            imeis += f" / IMEI2: {celular.imei2}"
+        return f"{base} - {imeis}"
+
+    @staticmethod
+    def _calcular_celular(item, celular, cantidad, descuento):
+        from .exceptions import DatosInvalidosError
+
+        if cantidad != 1:
+            raise DatosInvalidosError("cantidad_final", "El celular se vende por unidad (cantidad 1)")
+        try:
+            precio_unitario_original = Decimal(str(celular.precio_venta))
+        except (InvalidOperation, ValueError, TypeError) as e:
+            raise DatosInvalidosError("costo_venta", f"Precio inválido '{celular.precio_venta}': {e}")
+        if precio_unitario_original <= 0:
+            raise DatosInvalidosError(
+                "costo_venta",
+                f"El celular {celular.marca} {celular.modelo} (IMEI {celular.imei1}) no tiene precio de venta configurado"
+            )
+
+        precio_unitario = precio_unitario_original - (descuento / Decimal(cantidad))
+        if precio_unitario < 0:
+            raise DatosInvalidosError("descuento", f"Descuento {descuento} excede precio actual {precio_unitario_original} x {cantidad} (IMEI {celular.imei1})")
+
+        valor_unitario = precio_unitario / (Decimal("1.00") + VentaService.FACTOR_IGV)
+        valor_venta = valor_unitario * Decimal(cantidad)
+        igv = valor_venta * VentaService.FACTOR_IGV
+
+        try:
+            costo_compra_snap = Decimal(str(celular.costo_compra)) if celular.costo_compra is not None else None
+        except Exception:
+            costo_compra_snap = None
+        descripcion = VentaService._descripcion_celular(celular)
+        return {
+            "producto": None,
+            "inventario": None,
+            "celular": celular,
+            "tipo": "celular",
+            "cantidad": cantidad,
+            "descuento": descuento,
+            "precio_unitario_original": precio_unitario_original,
+            "precio_unitario": precio_unitario,
+            "valor_unitario": valor_unitario,
+            "valor_venta": valor_venta,
+            "igv": igv,
+            "costo_compra": costo_compra_snap,
+            "categoria_id": None,
+            "categoria_nombre": "Celulares",
+            "descripcion_sunat": descripcion,
+            "codigo_sunat": celular.imei1,
         }
 
     @staticmethod
     def create_venta_producto(venta, calculo):
+        celular = calculo.get("celular")
         return VentaProducto.objects.create(
             venta=venta,
             producto=calculo["producto"],
+            celular=celular,
+            imei=celular.imei1 if celular else None,
+            descripcion=calculo.get("descripcion_sunat"),
             cantidad=calculo["cantidad"],
             valor_unitario=calculo["valor_unitario"],
             valor_venta=calculo["valor_venta"],
@@ -266,6 +423,23 @@ class VentaService:
     @staticmethod
     def _check_updated(snapshot, producto, inventario):
         """Compara snapshot vs estado actual. Retorna (is_updated, updated_fields)."""
+        # Snapshot de celular: solo importa el precio de venta (el IMEI no cambia).
+        if snapshot.get("celular_id") is not None:
+            try:
+                from apps.celular.models import Celular
+                cel = Celular.objects.filter(id=snapshot.get("celular_id")).first()
+            except Exception:
+                cel = None
+            if cel is None or not getattr(cel, "activo", True) or getattr(cel, "is_deleted", False):
+                return False, []
+            snap_pv = snapshot.get("precio_venta", snapshot.get("costo_original"))
+            if snap_pv is not None:
+                try:
+                    if Decimal(str(snap_pv)).quantize(Decimal("0.01")) != Decimal(str(cel.precio_venta)).quantize(Decimal("0.01")):
+                        return True, ["precio_venta"]
+                except Exception:
+                    pass
+            return False, []
         updated = []
         if producto is None or VentaService._is_deleted(producto):
             return False, updated  # ya es deleted, no marcar como updated
@@ -320,6 +494,9 @@ class VentaService:
 
     @staticmethod
     def build_producto_registrado(calculo, request=None, inventario=None):
+        cel = calculo.get("celular")
+        if cel is not None:
+            return VentaService._snapshot_celular(calculo, cel, request)
         producto = calculo["producto"]
         # inventario puede venir en calculo["inventario"] o param
         inv = inventario or calculo.get("inventario")
@@ -403,7 +580,86 @@ class VentaService:
         }
 
     @staticmethod
-    def enrich_productos_json(productos_json, request=None, venta_productos_qs=None, venta=None):
+    def _snapshot_celular(calculo, celular, request=None):
+        """Snapshot de un celular vendido (producto_id queda en None a propósito)."""
+        img_url = None
+        try:
+            if getattr(celular, "imagen1", None) and hasattr(celular.imagen1, "url") and celular.imagen1:
+                url = celular.imagen1.url
+                img_url = request.build_absolute_uri(url) if request and url else url
+        except Exception:
+            img_url = None
+        descripcion = calculo.get("descripcion_sunat") or VentaService._descripcion_celular(celular)
+        try:
+            precio_compra = float(calculo.get("costo_compra")) if calculo.get("costo_compra") is not None else None
+        except Exception:
+            precio_compra = None
+        return {
+            "producto_id": None,
+            "celular_id": celular.id,
+            "imei": celular.imei1,
+            "producto_nombre": descripcion,
+            "cantidad": calculo["cantidad"],
+            "valor_unitario": float(calculo["valor_unitario"]),
+            "valor_venta": float(calculo["valor_venta"]),
+            "igv": float(calculo["igv"]),
+            "precio_unitario": float(calculo["precio_unitario"]),
+            "costo_original": float(calculo["precio_unitario_original"]),
+            "precio_venta": float(calculo["precio_unitario_original"]),
+            "descuento": float(calculo["descuento"]),
+            "sku": celular.imei1,
+            "categoria_id": None,
+            "categoria_nombre": "Celulares",
+            "categoria_color": None,
+            "categoria_data": {
+                "categoria_id": None,
+                "nombre": "Celulares",
+                "descripcion": "Venta por IMEI",
+                "color": None,
+                "imagen": None,
+                "activo": True,
+                "is_deleted": False,
+            },
+            "precio_compra": precio_compra,
+            "costo_compra": precio_compra,
+            "producto_imagen": img_url,
+            "img_url": img_url,
+            "imagen": img_url,
+            "is_deleted": False,
+            "producto_activo": True,
+            "producto_existe": True,
+            "is_updated": False,
+            "updated_fields": [],
+        }
+
+    @staticmethod
+    def _enriquecer_celular(item, celular_id, venta=None):
+        """Estado live de un item celular (no pasa por Producto/Inventario)."""
+        try:
+            from apps.celular.models import Celular
+            qs = Celular.objects.filter(id=celular_id)
+            tienda = getattr(venta, "tienda", None) if venta else None
+            if tienda is not None and getattr(tienda, "id", None):
+                qs = qs.filter(tienda_id=tienda.id)
+            cel = qs.first()
+        except Exception:
+            cel = None
+        eliminado = cel is None or not getattr(cel, "activo", True) or getattr(cel, "is_deleted", False)
+        actualizado = False
+        if not eliminado:
+            snap_pv = item.get("precio_venta", item.get("costo_original"))
+            try:
+                if snap_pv is not None and Decimal(str(snap_pv)).quantize(Decimal("0.01")) != Decimal(str(cel.precio_venta)).quantize(Decimal("0.01")):
+                    actualizado = True
+            except Exception:
+                pass
+        return {
+            "is_deleted": eliminado,
+            "producto_activo": not eliminado,
+            "producto_existe": not eliminado,
+            "is_updated": actualizado,
+            "updated_fields": ["precio_venta"] if actualizado else [],
+        }
         """
         Asegura img_url/producto_imagen, is_deleted y is_updated actualizados.
         is_deleted y is_updated se recalculan contra estado actual del producto/inventario.
@@ -472,6 +728,11 @@ class VentaService:
                 enriched.append(item)
                 continue
             pid = item.get("producto_id")
+            # --- item celular: no pasa por Producto/Inventario ---
+            if item.get("celular_id") is not None and pid is None:
+                item.update(VentaService._enriquecer_celular(item, item.get("celular_id"), venta))
+                enriched.append(item)
+                continue
             # --- img_url ---
             has_img = item.get("img_url") or item.get("producto_imagen")
             if not has_img:
@@ -576,11 +837,16 @@ class VentaService:
 
     @staticmethod
     def build_item_sunat(calculo):
-        producto = calculo["producto"]
+        codigo = calculo.get("codigo_sunat")
+        if codigo is None and calculo.get("producto") is not None:
+            codigo = calculo["producto"].sku
+        descripcion = calculo.get("descripcion_sunat")
+        if descripcion is None and calculo.get("producto") is not None:
+            descripcion = calculo["producto"].nombre
         return {
-            "codigo": producto.sku,
+            "codigo": codigo,
             "unidad": "NIU",
-            "descripcion": producto.nombre,
+            "descripcion": descripcion,
             "cantidad": calculo["cantidad"],
             "valorUnitario": round(float(calculo["valor_unitario"]), 2),
             "valorVenta": round(float(calculo["valor_venta"]), 2),
@@ -847,7 +1113,6 @@ class SunatService:
 
     @staticmethod
     def send_to_sunat(comprobante_data, tipo_comprobante):
-        import json
         import traceback
         import requests
         from .exceptions import SunatError
@@ -855,12 +1120,6 @@ class SunatService:
 
         php_url = SunatService.get_php_url(tipo_comprobante)
         try:
-            print(f"\n[SUNAT] Enviando comprobante a: {php_url}")
-            # Nunca loguear el bloque "emisor": lleva clave SOL y claves del
-            # certificado. Solo se registra un resumen sin secretos.
-            resumen = {k: v for k, v in comprobante_data.items() if k != "emisor"}
-            print(f"[SUNAT] Payload: {json.dumps(resumen, default=str, indent=2, ensure_ascii=False)}")
-
             response = requests.post(
                 php_url,
                 json=comprobante_data,
@@ -883,9 +1142,6 @@ class SunatService:
             print(traceback.format_exc())
             raise SunatError(str(e))
 
-        print(f"[SUNAT] HTTP {response.status_code}")
-        print(f"[SUNAT] Respuesta del endpoint: {response.text}")
-
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -903,6 +1159,16 @@ class SunatService:
         try:
             return response.json()
         except ValueError:
+            # Tolerancia: si el PHP emitió avisos antes del JSON, recortar desde el primer "{".
+            texto = response.text or ""
+            inicio = texto.find("{")
+            if inicio != -1:
+                try:
+                    import json as _json
+
+                    return _json.loads(texto[inicio:])
+                except ValueError:
+                    pass
             print("\n[SUNAT][ERROR] Respuesta inválida (no es JSON) del servidor de SUNAT:")
             print(f"[SUNAT][ERROR] HTTP {response.status_code} | Body: {response.text}")
             print("==========================================")
